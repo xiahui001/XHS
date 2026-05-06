@@ -1,11 +1,20 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fail, ok } from "@/lib/http";
+import { isHostedRuntime } from "@/lib/runtime/deployment";
 
 export const runtime = "nodejs";
 
 export async function POST() {
   try {
+    if (isHostedRuntime()) {
+      return fail(
+        "XHS_LOGIN_START_UNSUPPORTED",
+        "Vercel 公网版不能拉起本机小红书登录窗口，请在 localhost 本机版打开",
+        501
+      );
+    }
+
     const scriptPath = path.join(process.cwd(), "scripts", "login-xhs.mjs");
     const child = spawn(process.execPath, [scriptPath], {
       cwd: process.cwd(),

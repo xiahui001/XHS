@@ -1,6 +1,7 @@
 import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
+import { isHostedRuntime } from "@/lib/runtime/deployment";
 
 export type XhsLoginStatus = {
   loggedIn: boolean;
@@ -21,6 +22,17 @@ let liveStatusCache: {
 } | null = null;
 
 export async function getXhsLoginStatus(): Promise<XhsLoginStatus> {
+  if (isHostedRuntime()) {
+    return {
+      loggedIn: false,
+      storageStatePath: ".auth/xhs.json",
+      lastSavedAt: null,
+      detail: "Vercel 公网版不读取本机小红书登录态；请在 localhost 本机版完成登录",
+      verificationMode: "file",
+      checkedAt: null
+    };
+  }
+
   const fileStatus = await getStoredXhsLoginStatus();
   if (!fileStatus.loggedIn) return fileStatus;
 

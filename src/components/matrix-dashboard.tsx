@@ -256,10 +256,15 @@ export function MatrixDashboard() {
   const [keywordDraftBatches, setKeywordDraftBatches] = useState<KeywordDraftBatch[]>([]);
   const [activeSection, setActiveSection] = useState<SectionId>("section-0");
   const [authChecked, setAuthChecked] = useState(false);
+  const [localBrowserMode, setLocalBrowserMode] = useState(false);
 
   useEffect(() => {
     void bootstrapAuthState();
   }, [router]);
+
+  useEffect(() => {
+    setLocalBrowserMode(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  }, []);
 
   useEffect(() => {
     if (authUser && authChecked) void loadKeywordPresets(authUser.id, keywordAccountId);
@@ -558,6 +563,10 @@ export function MatrixDashboard() {
   }
 
   async function startXhsManualLogin() {
+    if (!localBrowserMode) {
+      setStatus("当前是公网版，不能远程打开你电脑上的登录窗口；请回到 localhost 本机版执行");
+      return;
+    }
     setBusyAction("xhs-login");
     const response = await postJson<{ started: boolean; message: string }>("/api/xhs/login/start", {});
     setBusyAction(null);
@@ -1039,14 +1048,14 @@ export function MatrixDashboard() {
                 <RefreshCw aria-hidden="true" size={16} />
                 {busyAction === "login-status" ? "检查中" : "刷新登录态"}
               </button>
-              <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login"}>
+              <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login" || !localBrowserMode}>
                 <ShieldCheck aria-hidden="true" size={16} />
-                {busyAction === "xhs-login" ? "打开中" : "打开登录窗口"}
+                {busyAction === "xhs-login" ? "打开中" : localBrowserMode ? "打开登录窗口" : "仅本机可打开"}
               </button>
             </div>
 
             <div className="binding-row">
-              <span>{workspaceState.binding.detail}</span>
+              <span>{localBrowserMode ? workspaceState.binding.detail : "公网版只显示状态，不会远程拉起你电脑上的浏览器或复用本机 .auth 登录态。"}</span>
               <button type="button" onClick={() => saveBindingState("binding", "正在绑定小红书账号")}>
                 设为绑定中
               </button>

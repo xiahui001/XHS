@@ -1,6 +1,7 @@
 import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
+import { isHostedRuntime } from "@/lib/runtime/deployment";
 
 export type EventwangLoginStatus = {
   loggedIn: boolean;
@@ -20,6 +21,17 @@ let liveStatusCache: {
 } | null = null;
 
 export async function getEventwangLoginStatus(): Promise<EventwangLoginStatus> {
+  if (isHostedRuntime()) {
+    return {
+      loggedIn: false,
+      storageStatePath: ".auth/eventwang.json",
+      lastSavedAt: null,
+      detail: "Vercel 公网版不读取本机活动汪登录态；请在 localhost 本机版登录并采集",
+      verificationMode: "file",
+      checkedAt: null
+    };
+  }
+
   const fileStatus = await getStoredEventwangLoginStatus();
   if (!fileStatus.loggedIn) return fileStatus;
 
@@ -124,4 +136,3 @@ async function probeEventwangOnlineStatus(fileStatus: EventwangLoginStatus): Pro
     await browser?.close().catch(() => {});
   }
 }
-

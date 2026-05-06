@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
+import { isHostedRuntime } from "@/lib/runtime/deployment";
 import { getEventwangLoginStatus } from "@/lib/eventwang/session";
 import { getXhsLoginStatus } from "@/lib/xhs/session";
 
@@ -32,6 +33,7 @@ export type ScrapingHandshake = {
 const WORKSPACE_ROOT = process.cwd();
 
 export async function getScrapingHandshake(): Promise<ScrapingHandshake> {
+  const hostedRuntime = isHostedRuntime();
   const authStatePath = path.join(WORKSPACE_ROOT, ".auth", "eventwang.json");
   const galleryScriptPath = path.join(WORKSPACE_ROOT, "scripts", "collect-eventwang-free-keyword.mjs");
   const outputRoot = path.join(WORKSPACE_ROOT, "data", "eventwang-gallery");
@@ -47,8 +49,8 @@ export async function getScrapingHandshake(): Promise<ScrapingHandshake> {
     await fileCheck("图库采集脚本", galleryScriptPath, "可由后端按图库路径调用"),
     {
       label: "Playwright 运行时",
-      ok: true,
-      detail: "随 Next.js Node 进程使用本地 playwright 依赖"
+      ok: !hostedRuntime,
+      detail: hostedRuntime ? "Vercel 公网版不提供本机浏览器驱动" : "随 Next.js Node 进程使用本地 playwright 依赖"
     },
     {
       label: "图库原图下载规则",
@@ -94,6 +96,9 @@ export async function getScrapingHandshake(): Promise<ScrapingHandshake> {
       connector("supabase", "Supabase 持久化", supabaseChecks, "环境变量齐全后可按用户持久化")
     ],
     safeguards: [
+      hostedRuntime
+        ? "当前是 Vercel 公网版，只用于登录鉴权、持久化和手机导入；本机浏览器登录与采集需在 localhost 执行。"
+        : "当前是本机版，可直接拉起本地浏览器完成登录和采集。",
       "活动汪登录与验证码由人工完成，后端只复用本地 storageState。",
       "活动汪只走“图库 -> 搜索关键词 -> 进入图片详情 -> 右侧下载原图”这条路径，不再调用旧搜索接口。",
       "每次采集会优先保留已布置、美陈、展示等风格，并尽量覆盖五种以上不同场景。",
