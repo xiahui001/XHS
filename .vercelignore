@@ -1,0 +1,13 @@
+.auth/
+.codex/
+.logs/
+.tools/
+.next/
+Lotus/
+Lotus-git/
+Lotus-latest/
+data/
+node_modules/
+.env
+.env.local
+tsconfig.tsbuildinfo
