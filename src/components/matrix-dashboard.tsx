@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { clearStoredAuthSession, readStoredAuthSession, type AuthUser } from "@/lib/auth/session";
 import { buildEventwangMediaUrl } from "@/lib/collectors/eventwang-gallery";
 import { getEventwangUsabilityError } from "@/lib/collectors/eventwang-usability";
@@ -257,6 +257,7 @@ export function MatrixDashboard() {
   const [activeSection, setActiveSection] = useState<SectionId>("section-0");
   const [authChecked, setAuthChecked] = useState(false);
   const [localBrowserMode, setLocalBrowserMode] = useState(false);
+  const draftDetailRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     void bootstrapAuthState();
@@ -273,6 +274,15 @@ export function MatrixDashboard() {
   useEffect(() => {
     setMobilePublishPackage(null);
   }, [selectedDraftId]);
+
+  useEffect(() => {
+    if (activeSection !== "section-3" || !selectedDraftId) return;
+
+    draftDetailRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  }, [activeSection, selectedDraftId]);
 
   const selectedCount = useMemo(() => drafts.filter((draft) => draft.status === "pending_review").length, [drafts]);
   const selectedAccountRow = useMemo(
@@ -579,6 +589,29 @@ export function MatrixDashboard() {
     setStatus(response.data.message);
   }
 
+  async function startEventwangManualLogin() {
+    if (!localBrowserMode) {
+      setStatus("当前是公网版，不能远程打开你电脑上的活动汪登录窗口；请回到 localhost 本机版执行");
+      return;
+    }
+
+    setBusyAction("eventwang-login");
+    const response = await postJson<{ started: boolean; message: string }>("/api/eventwang/login/start", {});
+    setBusyAction(null);
+
+    if (!response.ok || !response.data) {
+      setStatus(response.error?.message || "活动汪登录窗口启动失败");
+      return;
+    }
+
+    setStatus(response.data.message);
+  }
+
+  function openHostedLoginPage(url: string, label: string) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    setStatus(`已打开${label}官网；该浏览器登录仅供手动查看，不会回写本机采集登录态`);
+  }
+
   async function runMaterialToXhsWorkflow() {
     const workflowKeyword = resolveKeywordForRun(true);
     setWorkflowMode("auto");
@@ -778,6 +811,7 @@ export function MatrixDashboard() {
     updateWorkflowStep("send", "running", "等待选择草稿生成手机导入码");
     updateWorkflowStep("send", "done", `${sendCount} 篇本地草稿，选择后生成手机导入码`);
     setActiveWorkflowStep(4);
+    setActiveSection("section-3");
     setStatus("草稿已入库，请选择一篇生成手机导入码；不会自动发布");
   }
 
@@ -805,6 +839,8 @@ export function MatrixDashboard() {
       }
 
       setMobilePublishPackage(response.data);
+      setSelectedDraftId(selectedDraft.id);
+      setActiveSection("section-3");
       setStatus(
         response.data.publicAccessWarning ||
           `手机导入码已生成：${response.data.imageCount} 张图；手机扫码后点“一键导入小红书”`
@@ -1048,14 +1084,37 @@ export function MatrixDashboard() {
                 <RefreshCw aria-hidden="true" size={16} />
                 {busyAction === "login-status" ? "检查中" : "刷新登录态"}
               </button>
-              <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login" || !localBrowserMode}>
-                <ShieldCheck aria-hidden="true" size={16} />
-                {busyAction === "xhs-login" ? "打开中" : localBrowserMode ? "打开登录窗口" : "仅本机可打开"}
-              </button>
+              {localBrowserMode ? (
+                <>
+                  <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login"}>
+                    <ShieldCheck aria-hidden="true" size={16} />
+                    {busyAction === "xhs-login" ? "小红书打开中" : "打开小红书登录"}
+                  </button>
+                  <button type="button" onClick={startEventwangManualLogin} disabled={busyAction === "eventwang-login"}>
+                    <ShieldCheck aria-hidden="true" size={16} />
+                    {busyAction === "eventwang-login" ? "活动汪打开中" : "打开活动汪登录"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={() => openHostedLoginPage("https://www.xiaohongshu.com/", "小红书")}>
+                    <ShieldCheck aria-hidden="true" size={16} />
+                    打开小红书官网
+                  </button>
+                  <button type="button" onClick={() => openHostedLoginPage("https://www.eventwang.cn/Gallery", "活动汪")}>
+                    <ShieldCheck aria-hidden="true" size={16} />
+                    打开活动汪官网
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="binding-row">
-              <span>{localBrowserMode ? workspaceState.binding.detail : "公网版只显示状态，不会远程拉起你电脑上的浏览器或复用本机 .auth 登录态。"}</span>
+              <span>
+                {localBrowserMode
+                  ? "本机版可直接拉起小红书和活动汪登录窗口，登录完成后会写入 .auth 登录态文件。"
+                  : "公网版可打开官网登录，但不会回写你电脑本机的 .auth 登录态；本机采集仍需在 localhost 完成。"}
+              </span>
               <button type="button" onClick={() => saveBindingState("binding", "正在绑定小红书账号")}>
                 设为绑定中
               </button>
@@ -1263,7 +1322,7 @@ export function MatrixDashboard() {
             </div>
 
             {selectedDraft ? (
-              <article className="draft-detail">
+              <article className="draft-detail" ref={draftDetailRef}>
                 <div>
                   <span>{selectedDraft.accountName}</span>
                   <strong>{selectedDraft.title}</strong>
