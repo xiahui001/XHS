@@ -5,10 +5,12 @@ import { isHostedRuntime } from "@/lib/runtime/deployment";
 
 export type XhsLoginStatus = {
   loggedIn: boolean;
+  savedLogin: boolean;
+  riskBlocked: boolean;
   storageStatePath: string;
   lastSavedAt: string | null;
   detail: string;
-  verificationMode?: "file" | "live" | "cache";
+  verificationMode?: "file" | "live" | "cache" | "hosted";
   checkedAt?: string | null;
 };
 
@@ -21,23 +23,25 @@ let liveStatusCache: {
   status: XhsLoginStatus;
 } | null = null;
 
-export async function getXhsLoginStatus(): Promise<XhsLoginStatus> {
+export async function getXhsLoginStatus(options?: { fresh?: boolean }): Promise<XhsLoginStatus> {
   if (isHostedRuntime()) {
     return {
       loggedIn: false,
+      savedLogin: false,
+      riskBlocked: false,
       storageStatePath: ".auth/xhs.json",
       lastSavedAt: null,
-      detail: "Vercel 公网版不读取本机小红书登录态；请在 localhost 本机版完成登录",
-      verificationMode: "file",
+      detail: "Vercel 公网版无法判定本机小红书登录态；请在 localhost 本机版查看真实状态",
+      verificationMode: "hosted",
       checkedAt: null
     };
   }
 
   const fileStatus = await getStoredXhsLoginStatus();
-  if (!fileStatus.loggedIn) return fileStatus;
+  if (!fileStatus.savedLogin) return fileStatus;
 
   const now = Date.now();
-  if (liveStatusCache && now - liveStatusCache.checkedAtMs < LIVE_CHECK_TTL_MS) {
+  if (!options?.fresh && liveStatusCache && now - liveStatusCache.checkedAtMs < LIVE_CHECK_TTL_MS) {
     return {
       ...liveStatusCache.status,
       verificationMode: "cache",
@@ -61,20 +65,24 @@ async function getStoredXhsLoginStatus(): Promise<XhsLoginStatus> {
       cookies?: Array<{ name?: string; value?: string }>;
     };
     const cookies = Array.isArray(payload.cookies) ? payload.cookies : [];
-    const loggedIn = cookies.some((cookie) => Boolean(cookie.name && cookie.value && cookie.value.length > 8));
+    const savedLogin = cookies.some((cookie) => Boolean(cookie.name && cookie.value && cookie.value.length > 8));
     const fileStat = await stat(STORAGE_STATE_PATH);
 
     return {
-      loggedIn,
+      loggedIn: false,
+      savedLogin,
+      riskBlocked: false,
       storageStatePath: ".auth/xhs.json",
       lastSavedAt: fileStat.mtime.toISOString(),
-      detail: loggedIn ? "已保存人工登录态，等待真实在线探测" : "文件存在但未解析到有效 Cookie",
+      detail: savedLogin ? "已保存人工登录态，等待真实在线探测" : "文件存在但未解析到有效 Cookie",
       verificationMode: "file",
       checkedAt: null
     };
   } catch {
     return {
       loggedIn: false,
+      savedLogin: false,
+      riskBlocked: false,
       storageStatePath: ".auth/xhs.json",
       lastSavedAt: null,
       detail: "未检测到登录态文件",
@@ -106,12 +114,14 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
       const hasLoginDialog = /登录后|验证码登录|手机号登录|密码登录|扫码登录/.test(text);
       const hasLoggedInSurface = /发布|消息|通知|创作中心|我/.test(text);
       const hasLoginUrl = /login|signin/.test(url);
+      const riskBlocked = /error_code=300012/.test(url) || /安全限制|IP存在风险|可靠网络环境/.test(text);
 
       return {
         url,
         hasLoginDialog,
         hasLoginUrl,
         hasLoggedInSurface,
+        riskBlocked,
         title: document.title
       };
     });
@@ -119,15 +129,18 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
     await browser.close();
     browser = null;
 
-    const loggedIn = !result.hasLoginUrl && !result.hasLoginDialog;
+    const loggedIn = !result.hasLoginUrl && !result.hasLoginDialog && !result.riskBlocked;
     return {
       ...fileStatus,
       loggedIn,
+      riskBlocked: result.riskBlocked,
       detail: loggedIn
         ? result.hasLoggedInSurface
           ? "真实在线探测通过，已识别登录后页面元素"
           : "真实在线探测通过，未出现登录拦截"
-        : "真实在线探测未通过，请重新人工登录小红书",
+        : result.riskBlocked
+          ? "已检测到本地登录态，但小红书当前将该 IP / 网络判为风险，真实在线探测未通过"
+          : "真实在线探测未通过，请重新人工登录小红书",
       verificationMode: "live",
       checkedAt
     };
@@ -135,6 +148,7 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
     return {
       ...fileStatus,
       loggedIn: false,
+      riskBlocked: false,
       detail: `真实在线探测失败：${error instanceof Error ? error.message : "无法打开小红书"}`,
       verificationMode: "live",
       checkedAt

@@ -100,10 +100,12 @@ type WorkflowStep = {
 
 type XhsLoginStatus = {
   loggedIn: boolean;
+  savedLogin: boolean;
+  riskBlocked?: boolean;
   storageStatePath: string;
   lastSavedAt: string | null;
   detail: string;
-  verificationMode?: "file" | "live" | "cache";
+  verificationMode?: "file" | "live" | "cache" | "hosted";
   checkedAt?: string | null;
 };
 
@@ -552,14 +554,16 @@ export function MatrixDashboard() {
     );
   }
 
-  async function refreshXhsLoginStatus(): Promise<XhsLoginStatus> {
+  async function refreshXhsLoginStatus(fresh = true): Promise<XhsLoginStatus> {
     setBusyAction((current) => (current ? current : "login-status"));
-    const response = await getJson<XhsLoginStatus>("/api/xhs/session");
+    const response = await getJson<XhsLoginStatus>(`/api/xhs/session${fresh ? "?fresh=1" : ""}`);
     setBusyAction((current) => (current === "login-status" ? null : current));
 
     if (!response.ok || !response.data) {
       const fallback = {
         loggedIn: false,
+        savedLogin: false,
+        riskBlocked: false,
         storageStatePath: ".auth/xhs.json",
         lastSavedAt: null,
         detail: response.error?.message || "未检测到登录态"
@@ -914,7 +918,7 @@ export function MatrixDashboard() {
 
   async function refreshScrapingHandshake(showBusy: boolean) {
     if (showBusy) setBusyAction("handshake");
-    const response = await getJson<ScrapingHandshake>("/api/scraping/handshake");
+    const response = await getJson<ScrapingHandshake>(`/api/scraping/handshake${showBusy ? "?fresh=1" : ""}`);
     if (showBusy) setBusyAction(null);
 
     if (!response.ok || !response.data) {
@@ -1059,16 +1063,16 @@ export function MatrixDashboard() {
             <label className="field-label" htmlFor="targetAccount">
               目标账号
             </label>
-            <div className={`status-pill ${xhsLoginStatus?.loggedIn ? "ok" : "bad"}`}>
-              <span>{xhsLoginStatus?.loggedIn ? "已登录" : "未登录"}</span>
+            <div className={`status-pill ${xhsStatusPillTone(xhsLoginStatus)}`}>
+              <span>{xhsStatusHeadline(xhsLoginStatus)}</span>
               <small>
                 {selectedAccountRow ? `${selectedAccountRow[0]} · ${selectedAccountRow[1]} · ` : ""}
-                {xhsLoginStatus?.verificationMode === "live" || xhsLoginStatus?.verificationMode === "cache" ? "真实在线 · " : "本地文件 · "}
+                {xhsStatusModeLabel(xhsLoginStatus)}
                 {xhsLoginStatus?.detail || "等待检测"}
               </small>
             </div>
-            <div className={`status-pill ${eventwangConnector?.status === "ready" ? "ok" : "bad"}`}>
-              <span>活动汪{eventwangConnector?.status === "ready" ? "已登录" : "待检测"}</span>
+            <div className={`status-pill ${eventwangStatusPillTone(eventwangConnector)}`}>
+              <span>活动汪{eventwangStatusHeadline(eventwangConnector)}</span>
               <small>{eventwangLiveCheck?.detail || eventwangConnector?.message || "等待全局检测"}</small>
             </div>
             <select id="targetAccount" value={targetAccountId} onChange={(event) => changeTargetAccount(event.target.value)}>
@@ -1080,7 +1084,7 @@ export function MatrixDashboard() {
             </select>
 
             <div className="topbar-actions">
-              <button type="button" onClick={refreshXhsLoginStatus} disabled={busyAction === "login-status"}>
+              <button type="button" onClick={() => void refreshXhsLoginStatus(true)} disabled={busyAction === "login-status"}>
                 <RefreshCw aria-hidden="true" size={16} />
                 {busyAction === "login-status" ? "检查中" : "刷新登录态"}
               </button>
@@ -1555,6 +1559,47 @@ function connectorStatusText(status: ScrapingConnector["status"]) {
   if (status === "ready") return "就绪";
   if (status === "warning") return "待补齐";
   return "阻断";
+}
+
+function xhsStatusHeadline(status: XhsLoginStatus | null) {
+  if (!status) return "待检测";
+  if (status.verificationMode === "hosted") return "公网不可检测";
+  if (status.loggedIn) return "已登录";
+  if (status.savedLogin && status.riskBlocked) return "登录态已保存 / 被风控";
+  if (status.savedLogin) return "登录态已保存";
+  return "未登录";
+}
+
+function xhsStatusModeLabel(status: XhsLoginStatus | null) {
+  if (status?.verificationMode === "hosted") return "公网版 · ";
+  return status?.verificationMode === "live" || status?.verificationMode === "cache" ? "真实在线 · " : "本地文件 · ";
+}
+
+function xhsStatusPillTone(status: XhsLoginStatus | null) {
+  if (status?.verificationMode === "hosted") return "neutral";
+  return status?.loggedIn || status?.savedLogin ? "ok" : "bad";
+}
+
+function eventwangHasSavedLogin(connector: ScrapingConnector | null) {
+  return Boolean(connector?.checks.some((check) => check.label.includes("登录态文件") && check.ok));
+}
+
+function eventwangIsHosted(connector: ScrapingConnector | null) {
+  return Boolean(connector?.checks.some((check) => check.detail.includes("公网版无法判定")));
+}
+
+function eventwangStatusPillTone(connector: ScrapingConnector | null) {
+  if (eventwangIsHosted(connector)) return "neutral";
+  return connector?.status === "ready" || eventwangHasSavedLogin(connector) ? "ok" : "bad";
+}
+
+function eventwangStatusHeadline(connector: ScrapingConnector | null) {
+  if (!connector) return "待检测";
+  if (eventwangIsHosted(connector)) return "公网不可检测";
+  const liveReady = connector.checks.some((check) => check.label.includes("真实在线") && check.ok);
+  if (liveReady) return "已登录";
+  if (eventwangHasSavedLogin(connector)) return "登录态已保存";
+  return "未登录";
 }
 
 function isConnectorReady(handshake: ScrapingHandshake | null, key: ScrapingConnector["key"]) {

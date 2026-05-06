@@ -5,10 +5,11 @@ import { isHostedRuntime } from "@/lib/runtime/deployment";
 
 export type EventwangLoginStatus = {
   loggedIn: boolean;
+  savedLogin: boolean;
   storageStatePath: string;
   lastSavedAt: string | null;
   detail: string;
-  verificationMode: "file" | "live" | "cache";
+  verificationMode: "file" | "live" | "cache" | "hosted";
   checkedAt: string | null;
 };
 
@@ -20,23 +21,24 @@ let liveStatusCache: {
   status: EventwangLoginStatus;
 } | null = null;
 
-export async function getEventwangLoginStatus(): Promise<EventwangLoginStatus> {
+export async function getEventwangLoginStatus(options?: { fresh?: boolean }): Promise<EventwangLoginStatus> {
   if (isHostedRuntime()) {
     return {
       loggedIn: false,
+      savedLogin: false,
       storageStatePath: ".auth/eventwang.json",
       lastSavedAt: null,
-      detail: "Vercel 公网版不读取本机活动汪登录态；请在 localhost 本机版登录并采集",
-      verificationMode: "file",
+      detail: "Vercel 公网版无法判定本机活动汪登录态；请在 localhost 本机版查看真实状态",
+      verificationMode: "hosted",
       checkedAt: null
     };
   }
 
   const fileStatus = await getStoredEventwangLoginStatus();
-  if (!fileStatus.loggedIn) return fileStatus;
+  if (!fileStatus.savedLogin) return fileStatus;
 
   const now = Date.now();
-  if (liveStatusCache && now - liveStatusCache.checkedAtMs < LIVE_CHECK_TTL_MS) {
+  if (!options?.fresh && liveStatusCache && now - liveStatusCache.checkedAtMs < LIVE_CHECK_TTL_MS) {
     return {
       ...liveStatusCache.status,
       verificationMode: "cache",
@@ -60,20 +62,22 @@ async function getStoredEventwangLoginStatus(): Promise<EventwangLoginStatus> {
       cookies?: Array<{ name?: string; value?: string }>;
     };
     const cookies = Array.isArray(payload.cookies) ? payload.cookies : [];
-    const loggedIn = cookies.some((cookie) => Boolean(cookie.name && cookie.value && cookie.value.length > 8));
+    const savedLogin = cookies.some((cookie) => Boolean(cookie.name && cookie.value && cookie.value.length > 8));
     const fileStat = await stat(STORAGE_STATE_PATH);
 
     return {
-      loggedIn,
+      loggedIn: false,
+      savedLogin,
       storageStatePath: ".auth/eventwang.json",
       lastSavedAt: fileStat.mtime.toISOString(),
-      detail: loggedIn ? "已保存活动汪人工登录态，等待真实在线探测" : "文件存在但未解析到有效 Cookie",
+      detail: savedLogin ? "已保存活动汪人工登录态，等待真实在线探测" : "文件存在但未解析到有效 Cookie",
       verificationMode: "file",
       checkedAt: null
     };
   } catch {
     return {
       loggedIn: false,
+      savedLogin: false,
       storageStatePath: ".auth/eventwang.json",
       lastSavedAt: null,
       detail: "未检测到活动汪登录态文件",

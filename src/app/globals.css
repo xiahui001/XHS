@@ -241,6 +241,11 @@ a:focus-visible {
   border-color: rgba(54, 126, 73, 0.28);
 }
 
+.status-pill.neutral {
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(30, 28, 25, 0.12);
+}
+
 .status-pill.bad {
   background: rgba(255, 197, 190, 0.35);
   border-color: rgba(182, 63, 63, 0.28);

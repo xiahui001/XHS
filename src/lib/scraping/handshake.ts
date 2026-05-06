@@ -1,7 +1,7 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { isHostedRuntime } from "@/lib/runtime/deployment";
 import { getEventwangLoginStatus } from "@/lib/eventwang/session";
+import { isHostedRuntime } from "@/lib/runtime/deployment";
 import { getXhsLoginStatus } from "@/lib/xhs/session";
 
 export type ScrapingCheck = {
@@ -32,12 +32,15 @@ export type ScrapingHandshake = {
 
 const WORKSPACE_ROOT = process.cwd();
 
-export async function getScrapingHandshake(): Promise<ScrapingHandshake> {
+export async function getScrapingHandshake(options?: { fresh?: boolean }): Promise<ScrapingHandshake> {
   const hostedRuntime = isHostedRuntime();
   const authStatePath = path.join(WORKSPACE_ROOT, ".auth", "eventwang.json");
   const galleryScriptPath = path.join(WORKSPACE_ROOT, "scripts", "collect-eventwang-free-keyword.mjs");
   const outputRoot = path.join(WORKSPACE_ROOT, "data", "eventwang-gallery");
-  const [eventwangStatus, xhsStatus] = await Promise.all([getEventwangLoginStatus(), getXhsLoginStatus()]);
+  const [eventwangStatus, xhsStatus] = await Promise.all([
+    getEventwangLoginStatus({ fresh: options?.fresh }),
+    getXhsLoginStatus({ fresh: options?.fresh })
+  ]);
 
   const eventwangChecks: ScrapingCheck[] = [
     await fileCheck("活动汪登录态文件", authStatePath, "已保存人工登录后的 storageState"),
