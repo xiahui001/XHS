@@ -14,6 +14,7 @@ describe("workspace state", () => {
 
     expect(state.userId).toBe("user-1");
     expect(state.binding.state).toBe("unbound");
+    expect(state.binding.detail).toContain("手机发布账号");
     expect(state.prompts.textRemix).toContain("文案二创");
     expect(state.prompts.imageRemix).toContain("图片二创");
   });
@@ -36,6 +37,7 @@ describe("workspace state", () => {
       "text_generation",
       "image_generation"
     ]);
+    expect(checks.find((check) => check.key === "binding")?.label).toBe("手机发布账号");
     expect(checks.map((check) => check.light)).toEqual(["green", "red", "green", "red", "green", "red"]);
   });
 

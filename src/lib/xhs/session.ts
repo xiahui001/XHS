@@ -141,20 +141,53 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
     });
     await page.waitForLoadState("networkidle", { timeout: 12_000 }).catch(() => {});
     await page.waitForTimeout(4200);
+    const cookies = await context.cookies("https://www.xiaohongshu.com");
+    const nowSeconds = Date.now() / 1000;
+    const hasSessionCookie = cookies.some(
+      (cookie) =>
+        cookie.name === "web_session" &&
+        cookie.value.length > 10 &&
+        (cookie.expires === -1 || cookie.expires > nowSeconds)
+    );
 
-    const result = await page.evaluate(() => {
+    const result = await page.evaluate(async () => {
       const text = document.body?.innerText || "";
+      const loginText = text.replace(/退出登录/g, "");
       const url = location.href;
       const hasLoginDialog = /登录后|验证码登录|手机号登录|密码登录|扫码登录/.test(text);
-      const hasLoggedInSurface = /发布|消息|通知|创作中心|我/.test(text);
+      const hasLoginEntry = /登录|注册|验证码登录|手机号登录|密码登录|扫码登录/.test(loginText);
+      const hasLoggedInSurface = /消息|通知|创作中心|专业号中心/.test(text);
       const hasLoginUrl = /login|signin/.test(url);
       const riskBlocked = /error_code=300012/.test(url) || /安全限制|IP存在风险|可靠网络环境/.test(text);
+      let selfInfoOk = false;
+
+      for (const endpoint of ["/api/sns/web/v1/user/selfinfo", "/api/sns/web/v1/user/me"]) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 3500);
+          const response = await fetch(endpoint, {
+            credentials: "include",
+            signal: controller.signal
+          });
+          clearTimeout(timer);
+          const payload = await response.json().catch(() => null);
+          const data = payload && typeof payload === "object" ? (payload as { data?: Record<string, unknown>; success?: boolean }) : null;
+          if (response.ok && data?.success !== false && data?.data && Object.keys(data.data).length > 0) {
+            selfInfoOk = true;
+            break;
+          }
+        } catch {
+          // Ignore probe endpoint drift; DOM and cookie checks still decide conservatively.
+        }
+      }
 
       return {
         url,
         hasLoginDialog,
+        hasLoginEntry,
         hasLoginUrl,
         hasLoggedInSurface,
+        selfInfoOk,
         riskBlocked
       };
     });
@@ -162,7 +195,11 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
     await browser.close();
     browser = null;
 
-    const loggedIn = !result.hasLoginUrl && !result.hasLoginDialog && !result.riskBlocked;
+    const loggedIn =
+      !result.hasLoginUrl &&
+      !result.hasLoginDialog &&
+      !result.riskBlocked &&
+      (result.selfInfoOk || (hasSessionCookie && result.hasLoggedInSurface && !result.hasLoginEntry));
     return {
       ...fileStatus,
       loggedIn,

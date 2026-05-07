@@ -116,8 +116,6 @@ export default function MobilePublishPage() {
               <span>{packageData.packageId}</span>
             </div>
             <h1>{packageData.title}</h1>
-            <p>{packageData.body}</p>
-            <small>{tagText}</small>
             <div className="mobile-publish-status">{status}</div>
           </header>
 
@@ -139,6 +137,7 @@ export default function MobilePublishPage() {
 
           <section className="mobile-publish-panel">
             <h2>文案</h2>
+            <small className="mobile-publish-tags">{tagText}</small>
             <pre>{packageData.shareText}</pre>
           </section>
 

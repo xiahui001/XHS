@@ -4,22 +4,20 @@ import {
   CheckCircle2,
   FileText,
   Home,
-  ImageIcon,
   Layers3,
   ListPlus,
-  MessageSquareText,
   PlugZap,
   Plus,
   QrCode,
   RefreshCw,
   Save,
-  Search,
   Send,
   Settings,
   ShieldCheck,
   Sparkles,
   X as XIcon
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +28,8 @@ import { assignEventwangImagesToDrafts } from "@/lib/generation/draft-images";
 import { buildCoreSearchTerms } from "@/lib/keywords/search-terms";
 import { getMaterialHardBlocker } from "@/lib/workflow/material-gate";
 import { calculateWorkflowProgress } from "@/lib/workflow/progress";
+import { CONTENT_DOMAINS, XHS_COLLECTOR_PROFILE_LABEL, getContentDomain } from "@/lib/workspace/content-domains";
+import { DASHBOARD_NAV_ITEMS, type SectionId } from "@/lib/workspace/dashboard-navigation";
 import {
   buildKeywordOptions,
   buildGlobalChecks,
@@ -219,26 +219,18 @@ type ApiEnvelope<T> = {
   };
 };
 
-const navItems = [
-  { label: "今日工作台", icon: Home, id: "section-0" },
-  { label: "文案参考", icon: Search, id: "section-1" },
-  { label: "图库", icon: ImageIcon, id: "section-2" },
-  { label: "全局检测", icon: PlugZap, id: "section-global-check" },
-  { label: "草稿库", icon: FileText, id: "section-3" },
-  { label: "私信助手", icon: MessageSquareText, id: "section-5" },
-  { label: "关键词库", icon: ListPlus, id: "section-6" },
-  { label: "Prompt 设置", icon: Settings, id: "section-7" }
-] as const;
+const navIconById: Record<SectionId, LucideIcon> = {
+  "section-0": Home,
+  "section-global-check": PlugZap,
+  "section-3": FileText,
+  "section-6": ListPlus,
+  "section-7": Settings
+};
 
-type SectionId = (typeof navItems)[number]["id"];
-
-const accountRows = [
-  ["A1", "美业大健康微商", "招商会 / 沙龙 / 私域会销"],
-  ["A2", "校园", "开学季 / 毕业典礼 / 校园市集"],
-  ["A3", "建筑行业", "开放日 / 工程发布会 / 建筑展会"],
-  ["A4", "商超", "节日美陈 / 快闪店 / DP 点"],
-  ["A5", "企业年会团建", "年会 / 团建 / 答谢会"]
-];
+const navItems = DASHBOARD_NAV_ITEMS.map((item) => ({
+  ...item,
+  icon: navIconById[item.id]
+}));
 
 const TEST_XHS_REFERENCE_LIMIT = 3;
 const TEST_EVENTWANG_IMAGE_LIMIT = 4;
@@ -304,10 +296,7 @@ export function MatrixDashboard() {
   }, [activeSection, selectedDraftId]);
 
   const selectedCount = useMemo(() => drafts.filter((draft) => draft.status === "pending_review").length, [drafts]);
-  const selectedAccountRow = useMemo(
-    () => accountRows.find(([code]) => code === targetAccountId) ?? null,
-    [targetAccountId]
-  );
+  const selectedContentDomain = useMemo(() => getContentDomain(targetAccountId), [targetAccountId]);
   const selectedDraft = useMemo(
     () => drafts.find((draft) => draft.id === selectedDraftId) ?? drafts[0] ?? null,
     [drafts, selectedDraftId]
@@ -318,6 +307,14 @@ export function MatrixDashboard() {
   const nextWorkflowStep = workflowSteps[activeWorkflowStep];
   const runningWorkflowStep = workflowSteps.find((step) => step.status === "running");
   const targetKeywordOptions = useMemo(() => buildKeywordOptions(keywordPresets, targetAccountId), [keywordPresets, targetAccountId]);
+  const visibleKeywordPresets = useMemo(
+    () => keywordPresets.filter((preset) => preset.accountId === keywordAccountId),
+    [keywordAccountId, keywordPresets]
+  );
+  const visibleKeywordCount = useMemo(
+    () => buildKeywordOptions(visibleKeywordPresets, keywordAccountId).length,
+    [keywordAccountId, visibleKeywordPresets]
+  );
   const workflowProgress = useMemo(
     () =>
       calculateWorkflowProgress(
@@ -345,6 +342,7 @@ export function MatrixDashboard() {
     () => scrapingHandshake?.connectors.find((connector) => connector.key === "eventwang") ?? null,
     [scrapingHandshake]
   );
+  const eventwangLoggedIn = eventwangIsLiveLoggedIn(eventwangConnector);
   const eventwangLiveCheck = eventwangConnector?.checks.find((check) => check.label.includes("真实在线"));
   const activeMetricDetails = activeMetricKey
     ? buildMetricDetails(activeMetricKey, currentBatch, xhsReferences, drafts)
@@ -399,7 +397,7 @@ export function MatrixDashboard() {
 
     if (response.ok && response.data) {
       setWorkspaceState(response.data.state);
-      return response.data.lastAccountCode || response.data.state.binding.accountId || targetAccountId;
+      return response.data.lastAccountCode || targetAccountId;
     }
 
     return targetAccountId;
@@ -421,8 +419,8 @@ export function MatrixDashboard() {
     setSelectedDraftId(response.data.drafts[0]?.id ?? null);
     setStatus(
       response.data.drafts.length
-        ? `已加载 ${accountCode} 账号草稿 ${response.data.drafts.length} 篇（${draftModeText(response.data.mode)}）`
-        : `${accountCode} 账号暂无草稿`
+        ? `已加载 ${getContentDomain(accountCode)?.label} 领域草稿 ${response.data.drafts.length} 篇（${draftModeText(response.data.mode)}）`
+        : `${getContentDomain(accountCode)?.label} 领域暂无草稿`
     );
     return response.data.drafts;
   }
@@ -445,7 +443,7 @@ export function MatrixDashboard() {
   }
 
   async function saveBindingState(nextState: WorkspaceState["binding"]["state"], detail: string) {
-    const nextBinding = { state: nextState, accountId: targetAccountId, detail };
+    const nextBinding = { state: nextState, accountId: null, detail };
     setWorkspaceState((state) => ({ ...state, binding: nextBinding }));
 
     if (!authUser) {
@@ -455,7 +453,7 @@ export function MatrixDashboard() {
 
     const response = await postJson<{ saved: boolean }>("/api/binding-state", {
       userId: authUser.id,
-      accountCode: targetAccountId,
+      accountCode: null,
       state: nextState,
       detail
     });
@@ -486,19 +484,7 @@ export function MatrixDashboard() {
       lastAccountCode: accountCode
     });
 
-    if (!response.ok) setStatus(response.error?.message || "账号选择保存失败");
-  }
-
-  function changeTargetAccount(accountCode: string) {
-    setTargetAccountId(accountCode);
-    setKeywordAccountId(accountCode);
-    setKeywordSelection(DEFAULT_KEYWORD_OPTION);
-    setKeyword("");
-    setCurrentBatch(createEmptyBatchState());
-    setDrafts([]);
-    setSelectedDraftId(null);
-    void persistSelectedAccount(accountCode);
-    void loadDrafts(accountCode, authUser?.id);
+    if (!response.ok) setStatus(response.error?.message || "领域选择保存失败");
   }
 
   function changeKeywordAccount(accountCode: string) {
@@ -510,7 +496,7 @@ export function MatrixDashboard() {
     setCurrentBatch(createEmptyBatchState());
     setDrafts([]);
     setSelectedDraftId(null);
-    setStatus(`关键词库已切换到 ${accountCode}`);
+    setStatus(`关键词库已切换到 ${getContentDomain(accountCode)?.label} 领域`);
     void persistSelectedAccount(accountCode);
     void loadDrafts(accountCode, authUser?.id);
   }
@@ -524,7 +510,7 @@ export function MatrixDashboard() {
         : keywordSelection;
 
     if (!nextKeyword) {
-      throw new Error("当前目标账号还没有可用关键词，请先到关键词库导入预设");
+      throw new Error("当前内容领域还没有可用关键词，请先到关键词库导入预设");
     }
 
     setKeyword(nextKeyword);
@@ -563,7 +549,7 @@ export function MatrixDashboard() {
     setKeyword(response.data.preset.keywords[0] ?? "");
     setActiveSection("section-0");
     void persistSelectedAccount(keywordAccountId);
-    setStatus(`关键词预设已保存，并已同步到 ${keywordAccountId} 的工作台关键词选项`);
+    setStatus(`关键词预设已保存，并已同步到 ${getContentDomain(keywordAccountId)?.label} 领域的工作台关键词选项`);
   }
 
   function updateWorkflowStep(key: WorkflowStep["key"], stepStatus: WorkflowStep["status"], detail: string) {
@@ -576,7 +562,7 @@ export function MatrixDashboard() {
     );
   }
 
-  async function refreshXhsLoginStatus(fresh = true): Promise<XhsLoginStatus> {
+  async function refreshXhsLoginStatus(fresh = false): Promise<XhsLoginStatus> {
     setBusyAction((current) => (current ? current : "login-status"));
     const response = await getJson<XhsLoginStatus>(`/api/xhs/session${fresh ? "?fresh=1" : ""}`);
     setBusyAction((current) => (current === "login-status" ? null : current));
@@ -636,6 +622,32 @@ export function MatrixDashboard() {
   function openHostedLoginPage(url: string, label: string) {
     window.open(url, "_blank", "noopener,noreferrer");
     setStatus(`已打开${label}官网；该浏览器登录仅供手动查看，不会回写本机采集登录态`);
+  }
+
+  function handleXhsLoginCardClick() {
+    if (xhsLoginStatus?.loggedIn) {
+      void refreshXhsLoginStatus(true);
+      return;
+    }
+
+    if (localBrowserMode) {
+      void startXhsManualLogin();
+    } else {
+      openHostedLoginPage("https://www.xiaohongshu.com/", "小红书");
+    }
+  }
+
+  function handleEventwangLoginCardClick() {
+    if (eventwangLoggedIn) {
+      void refreshScrapingHandshake(true);
+      return;
+    }
+
+    if (localBrowserMode) {
+      void startEventwangManualLogin();
+    } else {
+      openHostedLoginPage("https://www.eventwang.cn/Gallery", "活动汪");
+    }
   }
 
   async function runMaterialToXhsWorkflow() {
@@ -1079,16 +1091,17 @@ export function MatrixDashboard() {
           })}
         </nav>
 
-        <div className="safety-strip">
-          <ShieldCheck aria-hidden="true" size={18} />
-          <span>{authUser?.email || "未登录"} · 人工确认发布 · 用户状态持久化</span>
+      </aside>
+
+      <section className="workspace">
+        <div className="workspace-authbar" aria-label="登录状态">
+          <ShieldCheck aria-hidden="true" size={16} />
+          <span>{authUser?.email || "未登录"}</span>
           <button type="button" onClick={signOut}>
             退出
           </button>
         </div>
-      </aside>
 
-      <section className="workspace">
         <section className="content-page" hidden={activeSection !== "section-0"} id="section-0">
           <div className="command-panel glass-panel">
             <div className="panel-heading">
@@ -1099,253 +1112,140 @@ export function MatrixDashboard() {
               <Layers3 aria-hidden="true" size={22} />
             </div>
 
-            <div className="mode-switch" aria-label="流程模式">
-              <button className={workflowMode === "review" ? "active" : ""} onClick={() => setWorkflowMode("review")} type="button">
-                <CheckCircle2 aria-hidden="true" size={16} />
-                分步审核
-              </button>
-              <button className={workflowMode === "auto" ? "active" : ""} onClick={() => setWorkflowMode("auto")} type="button">
-                <Sparkles aria-hidden="true" size={16} />
-                一键生成
-              </button>
-            </div>
-
-            <label className="field-label" htmlFor="keywordSelect">
-              关键词选项
-            </label>
-            <select
-              id="keywordSelect"
-              value={keywordSelection}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                setKeywordSelection(nextValue);
-                setKeyword(nextValue === DEFAULT_KEYWORD_OPTION ? "" : nextValue);
-              }}
-            >
-              <option value={DEFAULT_KEYWORD_OPTION}>默认：从当前账号预设关键词里随机选择</option>
-              {targetKeywordOptions.map((item) => (
-                <option value={item} key={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-            <div className="binding-row">
-              <span>
-                当前目标账号：{targetAccountId}。已载入 {targetKeywordOptions.length} 个关键词选项，当前策略：{keywordSelectionLabel}
-                {keyword ? `，本轮实际关键词：${keyword}` : ""}
-              </span>
-            </div>
-
-            <section className="account-console" aria-label="目标账号与登录状态">
-              <div className="account-console-top">
-                <div>
-                  <label className="field-label" htmlFor="targetAccount">
-                    目标账号
-                  </label>
-                  <p>{selectedAccountRow ? `${selectedAccountRow[0]} · ${selectedAccountRow[1]} · ${selectedAccountRow[2]}` : "请选择目标账号"}</p>
+            <div className="home-command-grid">
+              <div className="home-control-stack">
+                <div className="mode-switch" aria-label="流程模式">
+                  <button className={workflowMode === "review" ? "active" : ""} onClick={() => setWorkflowMode("review")} type="button">
+                    <CheckCircle2 aria-hidden="true" size={16} />
+                    分步审核
+                  </button>
+                  <button className={workflowMode === "auto" ? "active" : ""} onClick={() => setWorkflowMode("auto")} type="button">
+                    <Sparkles aria-hidden="true" size={16} />
+                    一键生成
+                  </button>
                 </div>
-                <select id="targetAccount" value={targetAccountId} onChange={(event) => changeTargetAccount(event.target.value)}>
-                  {accountRows.map(([code, industry]) => (
-                    <option value={code} key={code}>
-                      {code} · {industry}
+
+                <label className="field-label" htmlFor="contentDomain">
+                  领域选择
+                </label>
+                <select id="contentDomain" value={targetAccountId} onChange={(event) => changeKeywordAccount(event.target.value)}>
+                  {CONTENT_DOMAINS.map((domain) => (
+                    <option value={domain.id} key={domain.id}>
+                      {domain.id} · {domain.label} · {domain.scenario}
                     </option>
                   ))}
                 </select>
-              </div>
 
-              <div className="account-health-grid">
-                <div className={`status-pill account-health-card ${xhsStatusPillTone(xhsLoginStatus)}`}>
-                  <span>小红书{xhsStatusHeadline(xhsLoginStatus)}</span>
-                  <small>
-                    {xhsStatusModeLabel(xhsLoginStatus)}
-                    {xhsLoginStatus?.detail || "等待检测"}
-                  </small>
+                <label className="field-label" htmlFor="keywordSelect">
+                  关键词选项
+                </label>
+                <select
+                  id="keywordSelect"
+                  value={keywordSelection}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    setKeywordSelection(nextValue);
+                    setKeyword(nextValue === DEFAULT_KEYWORD_OPTION ? "" : nextValue);
+                  }}
+                >
+                  <option value={DEFAULT_KEYWORD_OPTION}>默认：从当前领域预设关键词里随机选择</option>
+                  {targetKeywordOptions.map((item) => (
+                    <option value={item} key={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+                <div className="binding-row">
+                  <span>
+                    当前内容领域：{selectedContentDomain.label}。已载入 {targetKeywordOptions.length} 个关键词选项，当前策略：{keywordSelectionLabel}
+                    {keyword ? `，本轮实际关键词：${keyword}` : ""}
+                  </span>
                 </div>
-                <div className={`status-pill account-health-card ${eventwangStatusPillTone(eventwangConnector)}`}>
-                  <span>活动汪{eventwangStatusHeadline(eventwangConnector)}</span>
-                  <small>{eventwangLiveCheck?.detail || eventwangConnector?.message || "等待全局检测"}</small>
-                </div>
-              </div>
 
-              <div className="account-action-row">
-                <button type="button" onClick={() => void refreshXhsLoginStatus(true)} disabled={busyAction === "login-status"}>
-                  <RefreshCw aria-hidden="true" size={16} />
-                  {busyAction === "login-status" ? "检查中" : "刷新登录态"}
-                </button>
-                {localBrowserMode ? (
-                  <>
-                    <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login"}>
-                      <ShieldCheck aria-hidden="true" size={16} />
-                      {busyAction === "xhs-login" ? "小红书打开中" : "打开小红书登录"}
+                <section className="account-console" aria-label="采集白号登录状态">
+                  <div className="account-health-grid">
+                    <button
+                      className={`status-pill account-health-card account-login-card ${xhsStatusPillTone(xhsLoginStatus)}`}
+                      disabled={busyAction === "login-status" || busyAction === "xhs-login"}
+                      onClick={handleXhsLoginCardClick}
+                      type="button"
+                    >
+                      <span>{XHS_COLLECTOR_PROFILE_LABEL}{xhsStatusHeadline(xhsLoginStatus)}</span>
+                      <small>{xhsLoginStatus?.loggedIn ? "点击刷新真实状态" : "点击打开登录"}</small>
                     </button>
-                    <button type="button" onClick={startEventwangManualLogin} disabled={busyAction === "eventwang-login"}>
-                      <ShieldCheck aria-hidden="true" size={16} />
-                      {busyAction === "eventwang-login" ? "活动汪打开中" : "打开活动汪登录"}
+                    <button
+                      className={`status-pill account-health-card account-login-card ${eventwangStatusPillTone(eventwangConnector)}`}
+                      disabled={busyAction === "handshake" || busyAction === "eventwang-login"}
+                      onClick={handleEventwangLoginCardClick}
+                      type="button"
+                    >
+                      <span>活动汪{eventwangStatusHeadline(eventwangConnector)}</span>
+                      <small>{eventwangLoggedIn ? "点击刷新真实状态" : "点击打开登录"}</small>
                     </button>
-                  </>
+                  </div>
+                </section>
+
+                {workflowMode === "review" ? (
+                  <button
+                    className="wide-button"
+                    onClick={runNextWorkflowStep}
+                    disabled={workflowBusy || activeWorkflowStep >= workflowSteps.length || !targetKeywordOptions.length}
+                  >
+                    <Send aria-hidden="true" size={17} />
+                    {workflowBusy ? "执行中" : nextWorkflowStep?.label ?? "已完成"}
+                  </button>
                 ) : (
-                  <>
-                    <button type="button" onClick={() => openHostedLoginPage("https://www.xiaohongshu.com/", "小红书")}>
-                      <ShieldCheck aria-hidden="true" size={16} />
-                      打开小红书官网
-                    </button>
-                    <button type="button" onClick={() => openHostedLoginPage("https://www.eventwang.cn/Gallery", "活动汪")}>
-                      <ShieldCheck aria-hidden="true" size={16} />
-                      打开活动汪官网
-                    </button>
-                  </>
+                  <button className="wide-button" onClick={runMaterialToXhsWorkflow} disabled={workflowBusy || !targetKeywordOptions.length}>
+                    <Sparkles aria-hidden="true" size={17} />
+                    {workflowBusy ? "生成中" : "素材采集并入库"}
+                  </button>
                 )}
               </div>
 
-              <div className="account-note-row">
-                <span>
-                  {localBrowserMode
-                    ? "本机版可拉起两个网页登录窗口，登录完成后写入 .auth 登录态文件。"
-                    : "公网版只能打开官网，不能回写本机 .auth；采集请回到 localhost。"}
-                </span>
-                <div>
-                  <button type="button" onClick={() => saveBindingState("binding", "正在绑定小红书账号")}>
-                    设为绑定中
-                  </button>
-                  <button type="button" onClick={() => saveBindingState("unbound", "已解除绑定")}>
-                    解除绑定
-                  </button>
+              <div className="home-progress-stack">
+                <div className="metric-row">
+                  <Metric label="素材参考" value={currentBatch.referenceCount} tone="mint" onClick={() => setActiveMetricKey("references")} />
+                  <Metric label="待审草稿" value={currentBatch.draftCount} tone="amber" onClick={() => setActiveMetricKey("drafts")} />
+                  <Metric label="关键词批次" value={currentBatch.keywordCount} tone="coral" onClick={() => setActiveMetricKey("keywords")} />
+                </div>
+
+                <div className="workflow-progress" aria-label="workflow progress">
+                  <div className="workflow-progress-topline">
+                    <span>{workflowProgress.label}</span>
+                    <strong>{workflowProgress.percent}%</strong>
+                  </div>
+                  <div
+                    aria-valuemax={100}
+                    aria-valuemin={0}
+                    aria-valuenow={workflowProgress.percent}
+                    className={workflowProgress.stalled ? "workflow-progress-track active" : "workflow-progress-track"}
+                    role="progressbar"
+                  >
+                    <i style={{ width: `${workflowProgress.percent}%` }} />
+                  </div>
+                  <div className="workflow-progress-meta">
+                    <span>
+                      {workflowProgress.completed}/{workflowProgress.total} 个真实步骤完成
+                    </span>
+                    <small>{workflowProgress.detail}</small>
+                  </div>
+                </div>
+
+                <div className="workflow-list">
+                  {workflowSteps.map((step) => (
+                    <div className={`workflow-step ${step.status}`} key={step.key}>
+                      <span>{step.label}</span>
+                      <strong>{workflowStatusText(step.status)}</strong>
+                      <p>{step.detail}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </section>
-
-            {workflowMode === "review" ? (
-              <button
-                className="wide-button"
-                onClick={runNextWorkflowStep}
-                disabled={workflowBusy || activeWorkflowStep >= workflowSteps.length || !targetKeywordOptions.length}
-              >
-                <Send aria-hidden="true" size={17} />
-                {workflowBusy ? "执行中" : nextWorkflowStep?.label ?? "已完成"}
-              </button>
-            ) : (
-              <button className="wide-button" onClick={runMaterialToXhsWorkflow} disabled={workflowBusy || !targetKeywordOptions.length}>
-                <Sparkles aria-hidden="true" size={17} />
-                {workflowBusy ? "生成中" : "素材采集并入库"}
-              </button>
-            )}
-
-            <div className="metric-row">
-              <Metric label="文案参考" value={currentBatch.referenceCount} tone="mint" onClick={() => setActiveMetricKey("references")} />
-              <Metric label="待审草稿" value={currentBatch.draftCount} tone="amber" onClick={() => setActiveMetricKey("drafts")} />
-              <Metric label="关键词批次" value={currentBatch.keywordCount} tone="coral" onClick={() => setActiveMetricKey("keywords")} />
-            </div>
-
-            <div className="workflow-progress" aria-label="workflow progress">
-              <div className="workflow-progress-topline">
-                <span>{workflowProgress.label}</span>
-                <strong>{workflowProgress.percent}%</strong>
-              </div>
-              <div
-                aria-valuemax={100}
-                aria-valuemin={0}
-                aria-valuenow={workflowProgress.percent}
-                className={workflowProgress.stalled ? "workflow-progress-track active" : "workflow-progress-track"}
-                role="progressbar"
-              >
-                <i style={{ width: `${workflowProgress.percent}%` }} />
-              </div>
-              <div className="workflow-progress-meta">
-                <span>
-                  {workflowProgress.completed}/{workflowProgress.total} 个真实步骤完成
-                </span>
-                <small>{workflowProgress.detail}</small>
-              </div>
-            </div>
-
-            <div className="workflow-list">
-              {workflowSteps.map((step) => (
-                <div className={`workflow-step ${step.status}`} key={step.key}>
-                  <span>{step.label}</span>
-                  <strong>{workflowStatusText(step.status)}</strong>
-                  <p>{step.detail}</p>
-                </div>
-              ))}
             </div>
           </div>
         </section>
 
         <section className="content-grid" hidden={activeSection === "section-0"}>
-          <Panel hidden={activeSection !== "section-1"} id="section-1" title="文案参考库" eyebrow="XHS & Gallery References" icon={<Search size={20} />}>
-            <div className="note-card-grid">
-              {xhsReferences.map((item) => (
-                <article className="note-card" key={item.id}>
-                  <div className="note-thumb">
-                    {item.imageUrls[0] ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.imageUrls[0]} alt={item.title} />
-                    ) : (
-                      <ImageIcon aria-hidden="true" size={22} />
-                    )}
-                  </div>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.content}</p>
-                    <span>{item.sourceUrl || "采集结果"}</span>
-                  </div>
-                </article>
-              ))}
-              {!xhsReferences.length && <EmptyState text="暂无参考" />}
-            </div>
-          </Panel>
-
-          <Panel hidden={activeSection !== "section-2"} id="section-2" title="活动汪图库" eyebrow="Gallery Search -> Detail -> Download Original" icon={<ImageIcon size={20} />}>
-            <div className="binding-row">
-              <span>固定路径：活动汪首页进入图库，在图库内搜索关键词，逐张进入图片详情，点击右侧“下载原图”获取无水印图片。</span>
-              <button type="button" onClick={collectEventwangImages} disabled={busyAction === "eventwang-gallery" || !targetKeywordOptions.length}>
-                {busyAction === "eventwang-gallery" ? "采集中" : "按图库路径采集"}
-              </button>
-            </div>
-
-            <div className="metric-row">
-              <Metric label="原图数量" value={eventwangGalleryResult?.selectedCount ?? images.length} tone="mint" />
-              <Metric label="风格覆盖" value={eventwangGalleryResult?.styleBucketCount ?? 0} tone="amber" />
-              <Metric label="候选重试" value={eventwangGalleryResult?.attempts?.length ?? 0} tone="coral" />
-            </div>
-
-            {eventwangGalleryResult ? (
-              <div className="scrape-result">
-                <div>
-                  <span>关键词</span>
-                  <strong>{eventwangGalleryResult.keyword}</strong>
-                </div>
-                <div>
-                  <span>已采集</span>
-                  <strong>{eventwangGalleryResult.selectedCount} 张</strong>
-                </div>
-                <div>
-                  <span>风格数</span>
-                  <strong>{eventwangGalleryResult.styleBucketCount}</strong>
-                </div>
-                <div>
-                  <span>要求值</span>
-                  <strong>{eventwangGalleryResult.requiredStyleBuckets}</strong>
-                </div>
-                <p>
-                  已优先保留已布置、美陈、展示等风格，采集结果会直接应用到草稿封面和正文配图。
-                  {eventwangGalleryResult.blockingReason ? ` 阻断原因：${eventwangGalleryResult.blockingReason}` : ""}
-                </p>
-                <code>{eventwangGalleryResult.outputDir}</code>
-              </div>
-            ) : null}
-
-            <div className="image-grid">
-              {images.map((image) => (
-                <figure key={`${image.sourceUrl}-${image.localPath || image.url}`}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={image.url} alt={image.alt || "活动汪图库图片"} />
-                  <figcaption>{[image.styleTag || image.alt, image.localPath].filter(Boolean).join(" · ")}</figcaption>
-                </figure>
-              ))}
-              {!images.length && <EmptyState text="暂无图库原图" />}
-            </div>
-          </Panel>
-
           <Panel hidden={activeSection !== "section-global-check"} id="section-global-check" title="全局检测" eyebrow="Traffic Light Verification" icon={<PlugZap size={20} />}>
             <div className="traffic-grid">
               {globalChecks.map((check) => (
@@ -1478,47 +1378,25 @@ export function MatrixDashboard() {
             ) : null}
           </Panel>
 
-          <Panel hidden={activeSection !== "section-5"} id="section-5" title="私信助手" eyebrow="Lead Reply Assistant" icon={<MessageSquareText size={20} />}>
-            <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={4} />
-            <button className="wide-button" onClick={analyzeMessage} disabled={busyAction === "reply"}>
-              {busyAction === "reply" ? "分析中" : "识别意图并生成回复"}
-            </button>
-            {reply ? (
-              <div className="reply-box">
-                <div>
-                  <span>意图</span>
-                  <strong>{reply.primaryIntent}</strong>
-                </div>
-                <div>
-                  <span>转人工</span>
-                  <strong>{reply.needsHuman ? "是" : "否"}</strong>
-                </div>
-                <p>{reply.suggestedReply}</p>
-              </div>
-            ) : (
-              <EmptyState text="暂无分析" />
-            )}
-          </Panel>
-
-          <Panel hidden={activeSection !== "section-6"} id="section-6" title="关键词库" eyebrow="Account Keyword Presets" icon={<ListPlus size={20} />}>
+          <Panel hidden={activeSection !== "section-6"} id="section-6" title="关键词库" eyebrow="Domain Keyword Presets" icon={<ListPlus size={20} />}>
             <label className="field-label" htmlFor="keywordAccount">
-              导入账号
+              内容领域
             </label>
             <select id="keywordAccount" value={keywordAccountId} onChange={(event) => changeKeywordAccount(event.target.value)}>
-              {accountRows.map(([code, industry, scenario]) => (
-                <option value={code} key={code}>
-                  {code} · {industry} · {scenario}
+              {CONTENT_DOMAINS.map((domain) => (
+                <option value={domain.id} key={domain.id}>
+                  {domain.id} · {domain.label} · {domain.scenario}
                 </option>
               ))}
             </select>
             <div className="binding-row">
               <span>
-                关键词会保存到 {keywordAccountId} 账号名下；切换账号会持久化该选择，并加载该账号自己的关键词预设。
+                关键词会保存到 {getContentDomain(keywordAccountId)?.label} 领域；切换领域会持久化该选择，并加载该领域自己的关键词预设。
               </span>
             </div>
 
             <label className="field-label" htmlFor="keywordPreset">
-              {keywordAccountId} 账号关键词预设
+              {getContentDomain(keywordAccountId)?.label} 领域关键词预设
             </label>
             <textarea
               id="keywordPreset"
@@ -1536,25 +1414,27 @@ export function MatrixDashboard() {
             </div>
 
             <div className="keyword-list">
-              {keywordPresets.map((preset) => (
+              {visibleKeywordPresets.map((preset) => (
                 <article className="keyword-card" key={preset.id}>
                   <div>
-                    <strong>{preset.accountId}</strong>
+                    <strong>{getContentDomain(preset.accountId)?.label}</strong>
                     <span>{preset.categories.join(" / ")}</span>
                   </div>
                   <p>{preset.keywords.join("、")}</p>
                 </article>
               ))}
-              {!keywordPresets.length && <EmptyState text="当前账号暂无关键词预设" />}
+              {!visibleKeywordPresets.length && <EmptyState text="当前领域暂无关键词预设" />}
             </div>
 
             <div className="batch-board">
-              {keywordDraftBatches.map((batch) => (
-                <div className="lead-stage" key={`${batch.accountId}-${batch.category}`}>
-                  <span>{batch.category}</span>
-                  <strong>{batch.draftCount}</strong>
-                </div>
-              ))}
+              <div className="lead-stage">
+                <span>当前领域预设</span>
+                <strong>{visibleKeywordPresets.length}</strong>
+              </div>
+              <div className="lead-stage">
+                <span>关键词合计</span>
+                <strong>{visibleKeywordCount}</strong>
+              </div>
             </div>
           </Panel>
 
@@ -1724,7 +1604,7 @@ function buildMetricDetails(
 ) {
   if (key === "references") {
     return {
-      title: "文案参考",
+      title: "素材参考",
       subtitle: `${batch.status} · ${batch.referenceCount} 条参考 · ${batch.imageCount} 张活动汪原图`,
       items: [
         ...(batch.xhsSkippedReason
@@ -1772,20 +1652,17 @@ function xhsStatusHeadline(status: XhsLoginStatus | null) {
   if (!status) return "待检测";
   if (status.verificationMode === "hosted") return "公网不可检测";
   if (status.loggedIn) return "已登录";
-  if (status.savedLogin && status.riskBlocked) return "登录态已保存 / 被风控";
-  if (status.savedLogin) return "登录态已保存";
+  if (status.riskBlocked) return "被风控";
+  if (status.savedLogin) return "需重新登录";
   return "未登录";
-}
-
-function xhsStatusModeLabel(status: XhsLoginStatus | null) {
-  if (status?.verificationMode === "hosted") return "公网版 · ";
-  return status?.verificationMode === "live" || status?.verificationMode === "cache" ? "真实在线 · " : "本地文件 · ";
 }
 
 function xhsStatusPillTone(status: XhsLoginStatus | null) {
   if (status?.verificationMode === "hosted") return "neutral";
   if (status?.riskBlocked) return "warn";
-  return status?.loggedIn || status?.savedLogin ? "ok" : "bad";
+  if (status?.loggedIn) return "ok";
+  if (status?.savedLogin) return "warn";
+  return "bad";
 }
 
 function eventwangHasSavedLogin(connector: ScrapingConnector | null) {
@@ -1798,7 +1675,7 @@ function eventwangIsHosted(connector: ScrapingConnector | null) {
 
 function eventwangStatusPillTone(connector: ScrapingConnector | null) {
   if (eventwangIsHosted(connector)) return "neutral";
-  if (connector?.status === "ready") return "ok";
+  if (eventwangIsLiveLoggedIn(connector)) return "ok";
   if (eventwangHasSavedLogin(connector)) return "warn";
   return "bad";
 }
@@ -1806,10 +1683,13 @@ function eventwangStatusPillTone(connector: ScrapingConnector | null) {
 function eventwangStatusHeadline(connector: ScrapingConnector | null) {
   if (!connector) return "待检测";
   if (eventwangIsHosted(connector)) return "公网不可检测";
-  const liveReady = connector.checks.some((check) => check.label.includes("真实在线") && check.ok);
-  if (liveReady) return "已登录";
-  if (eventwangHasSavedLogin(connector)) return "登录态已保存";
+  if (eventwangIsLiveLoggedIn(connector)) return "已登录";
+  if (eventwangHasSavedLogin(connector)) return "需重新登录";
   return "未登录";
+}
+
+function eventwangIsLiveLoggedIn(connector: ScrapingConnector | null) {
+  return Boolean(connector?.checks.some((check) => check.label.includes("真实在线") && check.ok));
 }
 
 function isConnectorReady(handshake: ScrapingHandshake | null, key: ScrapingConnector["key"]) {
@@ -1943,3 +1823,4 @@ function describeRequest(url: string) {
   if (url.includes("/api/drafts")) return "草稿入库";
   return "请求";
 }
+

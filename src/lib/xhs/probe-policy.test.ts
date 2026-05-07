@@ -41,4 +41,13 @@ describe("getXhsProbeCacheDecision", () => {
       reason: "risk-cooldown"
     });
   });
+
+  it("forces a live probe when the user explicitly refreshes", () => {
+    expect(
+      getXhsProbeCacheDecision({
+        ...baseInput,
+        fresh: true
+      })
+    ).toEqual({ shouldReuse: false, remainingMs: 0, reason: "expired" });
+  });
 });

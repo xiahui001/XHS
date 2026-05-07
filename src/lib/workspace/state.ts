@@ -74,7 +74,7 @@ export function createDefaultWorkspaceState(userId: string): WorkspaceState {
     binding: {
       state: "unbound",
       accountId: null,
-      detail: "等待绑定小红书账号"
+      detail: "等待手机发布账号人工确认"
     }
   };
 }
@@ -82,7 +82,7 @@ export function createDefaultWorkspaceState(userId: string): WorkspaceState {
 export function buildGlobalChecks(facts: GlobalCheckFacts): GlobalCheck[] {
   return [
     makeCheck("auth", "用户登录", facts.authReady, "Supabase 注册登录状态"),
-    makeCheck("binding", "账号绑定", facts.bindingReady, "绑定状态机"),
+    makeCheck("binding", "手机发布账号", facts.bindingReady, "手机端人工发布账号状态"),
     makeCheck("text_scrape", "文案爬取", facts.textScrapeReady, "小红书参考内容采集"),
     makeCheck("image_scrape", "图片爬取", facts.imageScrapeReady, "活动汪授权图片采集"),
     makeCheck("text_generation", "文案生成", facts.textGenerationReady, "文案二创模型"),

@@ -105,14 +105,19 @@ async function probeEventwangOnlineStatus(fileStatus: EventwangLoginStatus): Pro
 
     const result = await page.evaluate(() => {
       const text = document.body?.innerText || "";
+      const loginText = text.replace(/退出登录/g, "");
       const url = location.href;
       const hasGallerySearch = Boolean(document.querySelector("input.search_ipt")) || /图库|图片|下载原图/.test(text);
-      const hasLoginBlock = /登录|验证码|手机号|密码/.test(text) && !hasGallerySearch;
+      const hasLoginEntry = /登录|注册|验证码|手机号|密码/.test(loginText);
+      const hasAccountSurface =
+        /退出|个人中心|我的|会员中心|账号|已登录/.test(text) ||
+        Boolean(document.querySelector("[class*='avatar'], [class*='user'], [class*='account']"));
 
       return {
         url,
         hasGallerySearch,
-        hasLoginBlock,
+        hasLoginEntry,
+        hasAccountSurface,
         title: document.title
       };
     });
@@ -120,7 +125,7 @@ async function probeEventwangOnlineStatus(fileStatus: EventwangLoginStatus): Pro
     await browser.close();
     browser = null;
 
-    const loggedIn = result.hasGallerySearch && !result.hasLoginBlock;
+    const loggedIn = result.hasGallerySearch && result.hasAccountSurface && !result.hasLoginEntry;
     return {
       ...fileStatus,
       loggedIn,

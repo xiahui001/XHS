@@ -27,17 +27,17 @@ export function getXhsProbeCacheDecision(input: {
     return { shouldReuse: false, remainingMs: 0, reason: "login-state-changed" };
   }
 
+  if (input.fresh) {
+    return { shouldReuse: false, remainingMs: 0, reason: "expired" };
+  }
+
   const ageMs = Math.max(0, input.nowMs - input.checkedAtMs);
   const reuseWindowMs = input.cachedStatus.riskBlocked
     ? input.riskCooldownMs
-    : input.fresh
-      ? input.freshCooldownMs
-      : input.ttlMs;
+    : input.ttlMs;
   const reason = input.cachedStatus.riskBlocked
     ? "risk-cooldown"
-    : input.fresh
-      ? "fresh-cooldown"
-      : "cache-ttl";
+    : "cache-ttl";
 
   if (ageMs < reuseWindowMs) {
     return {
