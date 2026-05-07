@@ -133,20 +133,40 @@ export function buildMobilePublishHtml(pkg: MobilePublishPackage) {
     .meta { display:flex; flex-wrap:wrap; gap:8px; color:#675f55; font-size:12px; }
     .pill { padding: 6px 10px; border-radius: 999px; background: rgba(28,26,23,.06); }
     .actions { display:grid; gap:10px; margin-top: 16px; }
-    button, a.btn {
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      min-height: 46px;
-      padding: 0 16px;
+    button {
+      width: 100%;
       border: 0;
-      border-radius: 12px;
       font: inherit;
-      font-weight: 700;
-      text-decoration: none;
     }
-    button.primary, a.primary { background:#1c1a17; color:#fff; }
-    button.secondary, a.secondary { background:#fff; color:#1c1a17; border:1px solid rgba(28,26,23,.14); }
+    .step-button {
+      display:grid;
+      grid-template-columns: 68px 1fr;
+      gap: 4px 12px;
+      align-items:center;
+      min-height: 78px;
+      padding: 14px;
+      border: 1px solid rgba(28,26,23,.1);
+      border-radius: 14px;
+      background:#fff;
+      color:#1c1a17;
+      text-align:left;
+    }
+    .step-button span {
+      grid-row: span 2;
+      display:grid;
+      place-items:center;
+      width: 68px;
+      height: 36px;
+      border-radius: 999px;
+      background:#1c1a17;
+      color:#fff;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .step-button strong { font-size: 16px; line-height: 1.25; }
+    .step-button small { color:#685f55; font-size: 13px; line-height: 1.35; }
+    .step-button:disabled { cursor: wait; opacity: .72; }
     .layout {
       display:grid;
       gap: 16px;
@@ -203,10 +223,24 @@ export function buildMobilePublishHtml(pkg: MobilePublishPackage) {
       <h1>${escapeHtml(pkg.title)}</h1>
       <div class="note">${escapeHtml(pkg.body)}</div>
       <div class="meta">${pkg.tags.map((tag) => `<span class="pill">#${escapeHtml(tag)}</span>`).join("")}</div>
-      <div class="actions">
-        <button class="primary" id="share-btn" type="button">一键导入小红书</button>
+      <div class="actions" aria-label="手机发布步骤">
+        <button class="step-button" id="save-images-btn" type="button">
+          <span>Step 1</span>
+          <strong>保存图片至手机</strong>
+          <small>系统会弹出保存 ${pkg.imageUrls.length} 张图的选择</small>
+        </button>
+        <button class="step-button" id="copy-text-btn" type="button">
+          <span>Step 2</span>
+          <strong>复制文案</strong>
+          <small>复制标题、正文和标签</small>
+        </button>
+        <button class="step-button" id="open-xhs-btn" type="button">
+          <span>Step 3</span>
+          <strong>打开小红书发布</strong>
+          <small>进入小红书发帖子选择照片的页面</small>
+        </button>
       </div>
-      <div class="note" id="status">先点系统分享，再在小红书里手动确认发布。</div>
+      <div class="note" id="status">发布包已就绪，请按顺序完成 3 步。</div>
     </header>
 
     <section class="layout">
@@ -227,45 +261,67 @@ export function buildMobilePublishHtml(pkg: MobilePublishPackage) {
     const shareSource = document.getElementById("copy-source");
     const status = document.getElementById("status");
     const imagesRoot = document.getElementById("images");
-    const shareButton = document.getElementById("share-btn");
+    const saveImagesButton = document.getElementById("save-images-btn");
+    const copyTextButton = document.getElementById("copy-text-btn");
+    const openXhsButton = document.getElementById("open-xhs-btn");
 
     shareSource.textContent = data.shareText;
     imagesRoot.innerHTML = data.imageUrls.map((url, index) => (
       '<img alt="图片 ' + (index + 1) + '" src="' + url + '" />'
     )).join("");
 
-    shareButton.addEventListener("click", async () => {
-      try {
-        const files = [];
-        for (let index = 0; index < data.imageUrls.length; index += 1) {
-          const imageUrl = data.imageUrls[index];
-          const response = await fetch(imageUrl);
-          if (!response.ok) continue;
-          const blob = await response.blob();
-          const mime = blob.type || "image/jpeg";
-          const extension = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
-          files.push(new File([blob], 'xhs-' + (index + 1) + '.' + extension, { type: mime }));
-        }
+    async function buildShareFiles(imageUrls) {
+      const files = [];
+      for (let index = 0; index < imageUrls.length; index += 1) {
+        const imageUrl = imageUrls[index];
+        const response = await fetch(imageUrl);
+        if (!response.ok) continue;
+        const blob = await response.blob();
+        const mime = blob.type || "image/jpeg";
+        const extension = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+        files.push(new File([blob], 'xhs-' + (index + 1) + '.' + extension, { type: mime }));
+      }
+      return files;
+    }
 
+    saveImagesButton.addEventListener("click", async () => {
+      saveImagesButton.disabled = true;
+      status.textContent = "正在准备 " + data.imageUrls.length + " 张图片";
+      try {
+        const files = await buildShareFiles(data.imageUrls);
         if (!navigator.share) {
           throw new Error("当前浏览器不支持系统分享，请用手机系统浏览器重新扫码");
         }
         if (!files.length) {
-          throw new Error("图片文件未能加载，无法导入小红书");
+          throw new Error("图片文件未能加载，无法保存到手机");
         }
         if (navigator.canShare && !navigator.canShare({ files })) {
-          throw new Error("当前浏览器不支持多图分享，请换用手机系统浏览器扫码");
+          throw new Error("当前浏览器不支持多图保存，请换用手机系统浏览器扫码");
         }
-
         await navigator.share({
           title: data.title,
-          text: data.shareText,
           files
         });
-        status.textContent = "系统分享已打开，请选择小红书并在发布页确认内容。";
+        status.textContent = "系统菜单已打开，请选择保存图片或存储到照片。";
       } catch (error) {
-        status.textContent = error instanceof Error ? error.message : "系统分享失败";
+        status.textContent = error instanceof Error ? error.message : "保存图片失败";
+      } finally {
+        saveImagesButton.disabled = false;
       }
+    });
+
+    copyTextButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(data.shareText);
+        status.textContent = "文案已复制，可以粘贴到小红书发布页。";
+      } catch (error) {
+        status.textContent = "当前浏览器未授权复制，请长按下方文案手动复制。";
+      }
+    });
+
+    openXhsButton.addEventListener("click", () => {
+      status.textContent = "正在打开小红书发布入口。";
+      window.location.href = data.deeplinkUrl;
     });
   </script>
 </body>

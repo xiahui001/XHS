@@ -77,8 +77,8 @@ export function LoginPage() {
   }
 
   return (
-    <main className="login-shell">
-      <section className="glass-panel login-card">
+    <main className="login-shell login-shell-auth">
+      <section className="login-hero">
         <div className="brand-lockup">
           <div className="brand-mark">X</div>
           <div>
@@ -86,22 +86,46 @@ export function LoginPage() {
             <h1>用户注册登录</h1>
           </div>
         </div>
+        <p className="login-hero-copy">
+          先完成账号登录，再进入工作台。历史状态、关键词库和绑定状态会按用户 ID 持久化。
+        </p>
+        <div className="login-hero-grid">
+          <div>
+            <strong>1</strong>
+            <span>注册 / 登录</span>
+          </div>
+          <div>
+            <strong>2</strong>
+            <span>进入工作台</span>
+          </div>
+          <div>
+            <strong>3</strong>
+            <span>恢复历史状态</span>
+          </div>
+        </div>
+      </section>
 
+      <section className="glass-panel login-card login-form-card">
         <div className={`status-pill ${session ? "ok" : "bad"}`}>
           <UserRound aria-hidden="true" size={15} />
           <span>{session ? "已登录" : "未登录"}</span>
           <small>{session?.user.email || status}</small>
         </div>
 
-        <label className="field-label" htmlFor="email">
-          邮箱
-        </label>
-        <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-
-        <label className="field-label" htmlFor="password">
-          密码
-        </label>
-        <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        <div className="auth-fields">
+          <div>
+            <label className="field-label" htmlFor="email">
+              邮箱
+            </label>
+            <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+          </div>
+          <div>
+            <label className="field-label" htmlFor="password">
+              密码
+            </label>
+            <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          </div>
+        </div>
 
         <div className="topbar-actions">
           <button type="button" onClick={() => signInOrSignUp("sign-in")} disabled={busyAction === "sign-in"}>

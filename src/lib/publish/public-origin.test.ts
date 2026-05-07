@@ -41,4 +41,17 @@ describe("mobile publish public origin", () => {
     expect(result.phoneScanReady).toBe(true);
     expect(result.shareReady).toBe(true);
   });
+
+  it("uses Vercel production URL when a local request generates a phone package", () => {
+    const result = resolveMobilePublishOrigin({
+      requestUrl: "http://127.0.0.1:2000/api/mobile-publish-packages",
+      vercelProjectProductionUrl: "xhs-sandy.vercel.app",
+      getHeader: () => null
+    });
+
+    expect(result.origin).toBe("https://xhs-sandy.vercel.app");
+    expect(result.phoneScanReady).toBe(true);
+    expect(result.shareReady).toBe(true);
+    expect(result.warning).toBeNull();
+  });
 });

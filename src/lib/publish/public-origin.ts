@@ -9,11 +9,15 @@ type ResolveOriginInput = {
   requestUrl: string;
   appPublicUrl?: string | null;
   nextPublicAppUrl?: string | null;
+  vercelProjectProductionUrl?: string | null;
+  vercelUrl?: string | null;
   getHeader: (name: string) => string | null;
 };
 
 export function resolveMobilePublishOrigin(input: ResolveOriginInput): MobilePublishOrigin {
-  const configuredOrigin = normalizeOrigin(input.appPublicUrl || input.nextPublicAppUrl);
+  const configuredOrigin = normalizeOrigin(
+    input.appPublicUrl || input.nextPublicAppUrl || input.vercelProjectProductionUrl || input.vercelUrl
+  );
   const origin = configuredOrigin || resolveRequestOrigin(input.requestUrl, input.getHeader);
   const parsed = new URL(origin);
   const loopback = isLoopbackHost(parsed.hostname);
@@ -57,9 +61,10 @@ function resolveRequestOrigin(requestUrl: string, getHeader: ResolveOriginInput[
 function normalizeOrigin(value: string | null | undefined) {
   const raw = value?.trim();
   if (!raw) return "";
+  const normalized = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 
   try {
-    const url = new URL(raw);
+    const url = new URL(normalized);
     return url.origin;
   } catch {
     return "";

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { buildMobilePublishActionSteps, type MobilePublishActionStep } from "@/lib/publish/mobile-actions";
 
 type MobilePackageData = {
   packageId: string;
@@ -17,8 +18,7 @@ type MobilePackageData = {
 export default function MobilePublishPage() {
   const [packageData, setPackageData] = useState<MobilePackageData | null>(null);
   const [status, setStatus] = useState("正在加载发布包");
-  const [sharing, setSharing] = useState(false);
-  const [showFallback, setShowFallback] = useState(false);
+  const [busyAction, setBusyAction] = useState<MobilePublishActionStep["key"] | null>(null);
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href);
@@ -33,6 +33,10 @@ export default function MobilePublishPage() {
   }, []);
 
   const tagText = useMemo(() => packageData?.tags.map((tag) => `#${tag}`).join(" ") ?? "", [packageData]);
+  const steps = useMemo(
+    () => buildMobilePublishActionSteps(packageData?.imageUrls.length ?? 0),
+    [packageData?.imageUrls.length]
+  );
 
   async function loadPackage(nextDataUrl: string) {
     try {
@@ -40,18 +44,16 @@ export default function MobilePublishPage() {
       if (!response.ok) throw new Error(`发布包数据加载失败：HTTP ${response.status}`);
       const payload = (await response.json()) as MobilePackageData;
       setPackageData(payload);
-      setStatus("发布包已就绪");
-      setShowFallback(false);
+      setStatus("发布包已就绪，请按顺序完成 3 步");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "发布包数据加载失败");
     }
   }
 
-  async function shareToXhs() {
+  async function saveImagesToPhone() {
     if (!packageData) return;
-    setSharing(true);
-    setShowFallback(false);
-    setStatus("正在准备图片文件");
+    setBusyAction("save-images");
+    setStatus(`正在准备 ${packageData.imageUrls.length} 张图片`);
 
     try {
       const files = await buildShareFiles(packageData.imageUrls);
@@ -59,24 +61,48 @@ export default function MobilePublishPage() {
         throw new Error("当前浏览器不支持系统分享，请用手机系统浏览器重新扫码");
       }
       if (!files.length) {
-        throw new Error("图片文件未能加载，无法导入小红书");
+        throw new Error("图片文件未能加载，无法保存到本机");
       }
       if (navigator.canShare && !navigator.canShare({ files })) {
-        throw new Error("当前浏览器不支持多图分享，请换用手机系统浏览器扫码");
+        throw new Error("当前浏览器不支持多图保存，请换用手机系统浏览器扫码");
       }
 
       await navigator.share({
         title: packageData.title,
-        text: packageData.shareText,
         files
       });
-      setStatus("系统分享已打开，请选择小红书并在发布页确认内容");
+      setStatus("系统菜单已打开，请选择保存图片或存储到照片");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "系统分享失败");
-      setShowFallback(true);
+      setStatus(error instanceof Error ? error.message : "保存图片失败");
     } finally {
-      setSharing(false);
+      setBusyAction(null);
     }
+  }
+
+  async function copyText() {
+    if (!packageData) return;
+    setBusyAction("copy-text");
+
+    try {
+      await navigator.clipboard.writeText(packageData.shareText);
+      setStatus("文案已复制，可以粘贴到小红书发布页");
+    } catch {
+      setStatus("当前浏览器未授权复制，请长按下方文案手动复制");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  function openXhsPostEntry() {
+    if (!packageData) return;
+    setStatus("正在打开小红书发布入口");
+    window.location.href = packageData.deeplinkUrl;
+  }
+
+  function runStep(stepKey: MobilePublishActionStep["key"]) {
+    if (stepKey === "save-images") void saveImagesToPhone();
+    if (stepKey === "copy-text") void copyText();
+    if (stepKey === "open-xhs") openXhsPostEntry();
   }
 
   return (
@@ -92,18 +118,24 @@ export default function MobilePublishPage() {
             <h1>{packageData.title}</h1>
             <p>{packageData.body}</p>
             <small>{tagText}</small>
-            <div className="mobile-publish-actions">
-              <button type="button" onClick={shareToXhs} disabled={sharing}>
-                {sharing ? "正在导入" : "一键导入小红书"}
-              </button>
-            </div>
-            {showFallback ? (
-              <a className="mobile-publish-fallback" href={packageData.deeplinkUrl}>
-                仅打开小红书发布入口
-              </a>
-            ) : null}
             <div className="mobile-publish-status">{status}</div>
           </header>
+
+          <section className="mobile-publish-panel mobile-publish-steps">
+            {steps.map((step) => (
+              <button
+                className="mobile-step-button"
+                disabled={busyAction !== null}
+                key={step.key}
+                onClick={() => runStep(step.key)}
+                type="button"
+              >
+                <span>{step.stepLabel}</span>
+                <strong>{busyAction === step.key ? "处理中" : step.label}</strong>
+                <small>{step.detail}</small>
+              </button>
+            ))}
+          </section>
 
           <section className="mobile-publish-panel">
             <h2>文案</h2>

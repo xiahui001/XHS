@@ -17,7 +17,8 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  X as XIcon
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -27,6 +28,7 @@ import { buildEventwangMediaUrl } from "@/lib/collectors/eventwang-gallery";
 import { getEventwangUsabilityError } from "@/lib/collectors/eventwang-usability";
 import { assignEventwangImagesToDrafts } from "@/lib/generation/draft-images";
 import { buildCoreSearchTerms } from "@/lib/keywords/search-terms";
+import { getMaterialHardBlocker } from "@/lib/workflow/material-gate";
 import { calculateWorkflowProgress } from "@/lib/workflow/progress";
 import {
   buildKeywordOptions,
@@ -96,6 +98,19 @@ type WorkflowStep = {
   label: string;
   status: "waiting" | "running" | "done" | "failed";
   detail: string;
+};
+
+type MetricKey = "references" | "drafts" | "keywords";
+
+type CurrentBatchState = {
+  keyword: string;
+  searchTerms: string[];
+  referenceCount: number;
+  draftCount: number;
+  keywordCount: number;
+  imageCount: number;
+  status: string;
+  xhsSkippedReason: string | null;
 };
 
 type XhsLoginStatus = {
@@ -259,6 +274,8 @@ export function MatrixDashboard() {
   const [activeSection, setActiveSection] = useState<SectionId>("section-0");
   const [authChecked, setAuthChecked] = useState(false);
   const [localBrowserMode, setLocalBrowserMode] = useState(false);
+  const [activeMetricKey, setActiveMetricKey] = useState<MetricKey | null>(null);
+  const [currentBatch, setCurrentBatch] = useState<CurrentBatchState>(() => createEmptyBatchState());
   const draftDetailRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -329,6 +346,9 @@ export function MatrixDashboard() {
     [scrapingHandshake]
   );
   const eventwangLiveCheck = eventwangConnector?.checks.find((check) => check.label.includes("真实在线"));
+  const activeMetricDetails = activeMetricKey
+    ? buildMetricDetails(activeMetricKey, currentBatch, xhsReferences, drafts)
+    : null;
 
   useEffect(() => {
     setKeywordSelection(DEFAULT_KEYWORD_OPTION);
@@ -474,6 +494,7 @@ export function MatrixDashboard() {
     setKeywordAccountId(accountCode);
     setKeywordSelection(DEFAULT_KEYWORD_OPTION);
     setKeyword("");
+    setCurrentBatch(createEmptyBatchState());
     setDrafts([]);
     setSelectedDraftId(null);
     void persistSelectedAccount(accountCode);
@@ -486,6 +507,7 @@ export function MatrixDashboard() {
     setKeywordDraftBatches([]);
     setKeywordSelection(DEFAULT_KEYWORD_OPTION);
     setKeyword("");
+    setCurrentBatch(createEmptyBatchState());
     setDrafts([]);
     setSelectedDraftId(null);
     setStatus(`关键词库已切换到 ${accountCode}`);
@@ -664,35 +686,60 @@ export function MatrixDashboard() {
 
   async function runMaterialStep(currentKeyword: string) {
     updateWorkflowStep("material", "running", "真实在线检测中");
+    setXhsReferences([]);
+    setImages([]);
+    setDrafts([]);
+    setSelectedDraftId(null);
+    setEventwangGalleryResult(null);
+    setMobilePublishPackage(null);
     const handshake = await ensureScrapeConnectorsReady();
     if (!handshake) throw new Error("全局检测失败，请先刷新全局检测");
 
     const xhsConnector = handshake.connectors.find((connector) => connector.key === "xhs-hotspot");
     const eventwangConnector = handshake.connectors.find((connector) => connector.key === "eventwang");
-    if (xhsConnector?.status !== "ready" || eventwangConnector?.status !== "ready") {
-      const blocker = [xhsConnector, eventwangConnector]
-        .filter((connector) => connector && connector.status !== "ready")
-        .map((connector) => `${connector?.label}：${connector?.message}`)
-        .join("；");
-      updateWorkflowStep("material", "failed", blocker || "真实在线检测未通过");
-      throw new Error(blocker || "真实在线检测未通过");
+    const blocker = getMaterialHardBlocker(handshake.connectors);
+    if (blocker) {
+      updateWorkflowStep("material", "failed", blocker);
+      throw new Error(blocker);
     }
 
     const searchTerms = buildCoreSearchTerms(currentKeyword, 3);
-    updateWorkflowStep("material", "running", `小红书低频采集中：${searchTerms.join(" / ")}`);
-    setStatus(`正在按核心搜索词采集小红书参考素材：${searchTerms.join(" / ")}`);
-
-    const xhsResponse = await postJson<{ items: XhsReference[]; itemCount: number }>("/api/xhs/scrape", {
+    setCurrentBatch({
       keyword: currentKeyword,
-      keywordAlternates: searchTerms.slice(1),
-      limit: TEST_XHS_REFERENCE_LIMIT
+      searchTerms,
+      referenceCount: 0,
+      draftCount: 0,
+      keywordCount: searchTerms.length,
+      imageCount: 0,
+      status: "素材采集中",
+      xhsSkippedReason: null
     });
 
-    if (!xhsResponse.ok || !xhsResponse.data) {
-      throw new Error(xhsResponse.error?.message || "小红书采集失败");
+    let xhsItems: XhsReference[] = [];
+    let xhsItemCount = 0;
+    let xhsSkippedReason: string | null = null;
+
+    if (xhsConnector?.status === "ready") {
+      updateWorkflowStep("material", "running", `小红书低频采集中：${searchTerms.join(" / ")}`);
+      setStatus(`正在按核心搜索词采集小红书参考素材：${searchTerms.join(" / ")}`);
+
+      const xhsResponse = await postJson<{ items: XhsReference[]; itemCount: number }>("/api/xhs/scrape", {
+        keyword: currentKeyword,
+        keywordAlternates: searchTerms.slice(1),
+        limit: TEST_XHS_REFERENCE_LIMIT
+      });
+
+      if (xhsResponse.ok && xhsResponse.data) {
+        xhsItems = xhsResponse.data.items;
+        xhsItemCount = xhsResponse.data.itemCount;
+      } else {
+        xhsSkippedReason = xhsResponse.error?.message || "小红书参考采集失败，已降级使用活动汪素材";
+      }
+    } else {
+      xhsSkippedReason = `${xhsConnector?.label || "小红书热点参考"}：${xhsConnector?.message || "未就绪"}，已降级跳过`;
     }
 
-    updateWorkflowStep("material", "running", `小红书 ${xhsResponse.data.itemCount} 条，活动汪核心词采集中`);
+    updateWorkflowStep("material", "running", `${xhsSkippedReason ? "小红书参考已跳过" : `小红书 ${xhsItemCount} 条`}，活动汪核心词采集中`);
     setStatus(`正在按核心搜索词采集活动汪图库原图：${searchTerms.join(" / ")}`);
     const eventwangResponse = await postJson<EventwangGalleryResult>("/api/materials/collect-eventwang-free", {
       keyword: currentKeyword,
@@ -725,15 +772,22 @@ export function MatrixDashboard() {
       updateWorkflowStep("material", "failed", detail);
       throw new Error(detail);
     }
-    const references = [...xhsResponse.data.items, ...buildEventwangReferences(eventwangResponse.data)];
+    const references = [...xhsItems, ...buildEventwangReferences(eventwangResponse.data)];
 
     setImages(eventwangImages);
     setXhsReferences(references);
     setEventwangGalleryResult(eventwangResponse.data);
+    setCurrentBatch((batch) => ({
+      ...batch,
+      referenceCount: references.length,
+      imageCount: eventwangImages.length,
+      status: "素材采集完成",
+      xhsSkippedReason
+    }));
     updateWorkflowStep(
       "material",
       "done",
-      `小红书 ${xhsResponse.data.itemCount} 条 / 图库原图 ${eventwangImages.length}/${TEST_EVENTWANG_IMAGE_LIMIT} 张 / 搜索词 ${eventwangResponse.data.keyword}`
+      `${xhsSkippedReason ? "小红书参考跳过" : `小红书 ${xhsItemCount} 条`} / 图库原图 ${eventwangImages.length}/${TEST_EVENTWANG_IMAGE_LIMIT} 张 / 搜索词 ${eventwangResponse.data.keyword}`
     );
     if (eventwangResponse.data.blockingReason && eventwangResponse.data.selectedCount === 0) {
       setStatus(`活动汪已阻断：${eventwangResponse.data.blockingReason}`);
@@ -760,14 +814,20 @@ export function MatrixDashboard() {
     });
 
     if (!remix.ok || !remix.data) throw new Error(remix.error?.message || "文案二创失败");
+    const remixData = remix.data;
 
     updateWorkflowStep("text", "running", "模型已返回，正在写入草稿状态");
-    setDrafts(remix.data.drafts);
-    setSelectedDraftId(remix.data.drafts[0]?.id ?? null);
-    updateWorkflowStep("text", "done", `${remix.data.drafts.length} 篇`);
+    setDrafts(remixData.drafts);
+    setSelectedDraftId(remixData.drafts[0]?.id ?? null);
+    setCurrentBatch((batch) => ({
+      ...batch,
+      draftCount: remixData.drafts.length,
+      status: "文案生成完成"
+    }));
+    updateWorkflowStep("text", "done", `${remixData.drafts.length} 篇`);
     setActiveWorkflowStep(2);
     setStatus("文案已生成");
-    return remix.data.drafts;
+    return remixData.drafts;
   }
 
   async function runImageStep(nextDrafts: Draft[], imagePool = images) {
@@ -784,6 +844,11 @@ export function MatrixDashboard() {
     }));
     setDrafts(draftsWithImages);
     setSelectedDraftId(draftsWithImages[0]?.id ?? null);
+    setCurrentBatch((batch) => ({
+      ...batch,
+      draftCount: draftsWithImages.length,
+      status: "原图配图完成"
+    }));
     updateWorkflowStep("image", "done", `${imagePlacements.length} 篇草稿已配图`);
     setActiveWorkflowStep(3);
     setStatus("活动汪原图已应用到草稿");
@@ -802,21 +867,32 @@ export function MatrixDashboard() {
     });
 
     if (!saved.ok || !saved.data) throw new Error(saved.error?.message || "草稿保存失败");
+    const savedData = saved.data;
 
-    setDrafts(saved.data.drafts);
-    setSelectedDraftId(saved.data.drafts[0]?.id ?? null);
-    updateWorkflowStep("draft", "done", `${saved.data.insertedCount} 篇`);
+    setDrafts(savedData.drafts);
+    setSelectedDraftId(savedData.drafts[0]?.id ?? null);
+    setCurrentBatch((batch) => ({
+      ...batch,
+      draftCount: savedData.drafts.length,
+      status: "草稿已入库"
+    }));
+    updateWorkflowStep("draft", "done", `${savedData.insertedCount} 篇`);
     setActiveWorkflowStep(4);
     setStatus("草稿已入库");
-    return saved.data.insertedCount;
+    return savedData.insertedCount;
   }
 
   function runSendStep(sendCount: number) {
-    updateWorkflowStep("send", "running", "等待选择草稿生成手机导入码");
-    updateWorkflowStep("send", "done", `${sendCount} 篇本地草稿，选择后生成手机导入码`);
+    updateWorkflowStep("send", "running", "等待选择草稿生成手机三步发布码");
+    updateWorkflowStep("send", "done", `${sendCount} 篇本地草稿，选择后生成手机三步发布码`);
+    setCurrentBatch((batch) => ({
+      ...batch,
+      draftCount: sendCount,
+      status: "等待手机发布"
+    }));
     setActiveWorkflowStep(4);
     setActiveSection("section-3");
-    setStatus("草稿已入库，请选择一篇生成手机导入码；不会自动发布");
+    setStatus("草稿已入库，请选择一篇生成手机三步发布码；不会自动发布");
   }
 
   async function createMobilePublishPackage() {
@@ -847,7 +923,7 @@ export function MatrixDashboard() {
       setActiveSection("section-3");
       setStatus(
         response.data.publicAccessWarning ||
-          `手机导入码已生成：${response.data.imageCount} 张图；手机扫码后点“一键导入小红书”`
+          `手机三步发布码已生成：${response.data.imageCount} 张图；扫码后按 Step 1 保存图片、Step 2 复制文案、Step 3 打开小红书发布`
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "手机发布包生成失败");
@@ -1060,72 +1136,83 @@ export function MatrixDashboard() {
               </span>
             </div>
 
-            <label className="field-label" htmlFor="targetAccount">
-              目标账号
-            </label>
-            <div className={`status-pill ${xhsStatusPillTone(xhsLoginStatus)}`}>
-              <span>{xhsStatusHeadline(xhsLoginStatus)}</span>
-              <small>
-                {selectedAccountRow ? `${selectedAccountRow[0]} · ${selectedAccountRow[1]} · ` : ""}
-                {xhsStatusModeLabel(xhsLoginStatus)}
-                {xhsLoginStatus?.detail || "等待检测"}
-              </small>
-            </div>
-            <div className={`status-pill ${eventwangStatusPillTone(eventwangConnector)}`}>
-              <span>活动汪{eventwangStatusHeadline(eventwangConnector)}</span>
-              <small>{eventwangLiveCheck?.detail || eventwangConnector?.message || "等待全局检测"}</small>
-            </div>
-            <select id="targetAccount" value={targetAccountId} onChange={(event) => changeTargetAccount(event.target.value)}>
-              {accountRows.map(([code, industry]) => (
-                <option value={code} key={code}>
-                  {code} · {industry}
-                </option>
-              ))}
-            </select>
+            <section className="account-console" aria-label="目标账号与登录状态">
+              <div className="account-console-top">
+                <div>
+                  <label className="field-label" htmlFor="targetAccount">
+                    目标账号
+                  </label>
+                  <p>{selectedAccountRow ? `${selectedAccountRow[0]} · ${selectedAccountRow[1]} · ${selectedAccountRow[2]}` : "请选择目标账号"}</p>
+                </div>
+                <select id="targetAccount" value={targetAccountId} onChange={(event) => changeTargetAccount(event.target.value)}>
+                  {accountRows.map(([code, industry]) => (
+                    <option value={code} key={code}>
+                      {code} · {industry}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            <div className="topbar-actions">
-              <button type="button" onClick={() => void refreshXhsLoginStatus(true)} disabled={busyAction === "login-status"}>
-                <RefreshCw aria-hidden="true" size={16} />
-                {busyAction === "login-status" ? "检查中" : "刷新登录态"}
-              </button>
-              {localBrowserMode ? (
-                <>
-                  <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login"}>
-                    <ShieldCheck aria-hidden="true" size={16} />
-                    {busyAction === "xhs-login" ? "小红书打开中" : "打开小红书登录"}
-                  </button>
-                  <button type="button" onClick={startEventwangManualLogin} disabled={busyAction === "eventwang-login"}>
-                    <ShieldCheck aria-hidden="true" size={16} />
-                    {busyAction === "eventwang-login" ? "活动汪打开中" : "打开活动汪登录"}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button type="button" onClick={() => openHostedLoginPage("https://www.xiaohongshu.com/", "小红书")}>
-                    <ShieldCheck aria-hidden="true" size={16} />
-                    打开小红书官网
-                  </button>
-                  <button type="button" onClick={() => openHostedLoginPage("https://www.eventwang.cn/Gallery", "活动汪")}>
-                    <ShieldCheck aria-hidden="true" size={16} />
-                    打开活动汪官网
-                  </button>
-                </>
-              )}
-            </div>
+              <div className="account-health-grid">
+                <div className={`status-pill account-health-card ${xhsStatusPillTone(xhsLoginStatus)}`}>
+                  <span>小红书{xhsStatusHeadline(xhsLoginStatus)}</span>
+                  <small>
+                    {xhsStatusModeLabel(xhsLoginStatus)}
+                    {xhsLoginStatus?.detail || "等待检测"}
+                  </small>
+                </div>
+                <div className={`status-pill account-health-card ${eventwangStatusPillTone(eventwangConnector)}`}>
+                  <span>活动汪{eventwangStatusHeadline(eventwangConnector)}</span>
+                  <small>{eventwangLiveCheck?.detail || eventwangConnector?.message || "等待全局检测"}</small>
+                </div>
+              </div>
 
-            <div className="binding-row">
-              <span>
-                {localBrowserMode
-                  ? "本机版可直接拉起小红书和活动汪登录窗口，登录完成后会写入 .auth 登录态文件。"
-                  : "公网版可打开官网登录，但不会回写你电脑本机的 .auth 登录态；本机采集仍需在 localhost 完成。"}
-              </span>
-              <button type="button" onClick={() => saveBindingState("binding", "正在绑定小红书账号")}>
-                设为绑定中
-              </button>
-              <button type="button" onClick={() => saveBindingState("unbound", "已解除绑定")}>
-                解除绑定
-              </button>
-            </div>
+              <div className="account-action-row">
+                <button type="button" onClick={() => void refreshXhsLoginStatus(true)} disabled={busyAction === "login-status"}>
+                  <RefreshCw aria-hidden="true" size={16} />
+                  {busyAction === "login-status" ? "检查中" : "刷新登录态"}
+                </button>
+                {localBrowserMode ? (
+                  <>
+                    <button type="button" onClick={startXhsManualLogin} disabled={busyAction === "xhs-login"}>
+                      <ShieldCheck aria-hidden="true" size={16} />
+                      {busyAction === "xhs-login" ? "小红书打开中" : "打开小红书登录"}
+                    </button>
+                    <button type="button" onClick={startEventwangManualLogin} disabled={busyAction === "eventwang-login"}>
+                      <ShieldCheck aria-hidden="true" size={16} />
+                      {busyAction === "eventwang-login" ? "活动汪打开中" : "打开活动汪登录"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => openHostedLoginPage("https://www.xiaohongshu.com/", "小红书")}>
+                      <ShieldCheck aria-hidden="true" size={16} />
+                      打开小红书官网
+                    </button>
+                    <button type="button" onClick={() => openHostedLoginPage("https://www.eventwang.cn/Gallery", "活动汪")}>
+                      <ShieldCheck aria-hidden="true" size={16} />
+                      打开活动汪官网
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="account-note-row">
+                <span>
+                  {localBrowserMode
+                    ? "本机版可拉起两个网页登录窗口，登录完成后写入 .auth 登录态文件。"
+                    : "公网版只能打开官网，不能回写本机 .auth；采集请回到 localhost。"}
+                </span>
+                <div>
+                  <button type="button" onClick={() => saveBindingState("binding", "正在绑定小红书账号")}>
+                    设为绑定中
+                  </button>
+                  <button type="button" onClick={() => saveBindingState("unbound", "已解除绑定")}>
+                    解除绑定
+                  </button>
+                </div>
+              </div>
+            </section>
 
             {workflowMode === "review" ? (
               <button
@@ -1144,9 +1231,9 @@ export function MatrixDashboard() {
             )}
 
             <div className="metric-row">
-              <Metric label="文案参考" value={xhsReferences.length} tone="mint" />
-              <Metric label="待审草稿" value={selectedCount} tone="amber" />
-              <Metric label="关键词批次" value={keywordDraftBatches.length} tone="coral" />
+              <Metric label="文案参考" value={currentBatch.referenceCount} tone="mint" onClick={() => setActiveMetricKey("references")} />
+              <Metric label="待审草稿" value={currentBatch.draftCount} tone="amber" onClick={() => setActiveMetricKey("drafts")} />
+              <Metric label="关键词批次" value={currentBatch.keywordCount} tone="coral" onClick={() => setActiveMetricKey("keywords")} />
             </div>
 
             <div className="workflow-progress" aria-label="workflow progress">
@@ -1350,7 +1437,7 @@ export function MatrixDashboard() {
                   type="button"
                 >
                   <QrCode aria-hidden="true" size={16} />
-                  {busyAction === "mobile-publish-package" ? "导入码生成中" : "生成手机导入码"}
+                  {busyAction === "mobile-publish-package" ? "发布码生成中" : "生成手机三步发布码"}
                 </button>
                 {mobilePublishPackage ? (
                   <div className="mobile-package-card">
@@ -1358,16 +1445,16 @@ export function MatrixDashboard() {
                       <div className={mobilePublishPackage.phoneScanReady ? "qr-preview" : "qr-preview warn"}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          alt="手机导入二维码"
+                          alt="手机三步发布二维码"
                           src={`/api/mobile-publish-packages/qr?url=${encodeURIComponent(mobilePublishPackage.packageUrl)}`}
                         />
-                        <span>{mobilePublishPackage.phoneScanReady ? "扫码导入到手机" : "仅电脑本机可用"}</span>
+                        <span>{mobilePublishPackage.phoneScanReady ? "扫码打开三步发布页" : "仅电脑本机可用"}</span>
                       </div>
                     </div>
                     <div className="mobile-package-copy">
-                      <strong>手机导入码</strong>
+                      <strong>手机三步发布码</strong>
                       <span>
-                        {mobilePublishPackage.imageCount} 张图 · 手机端一键导入
+                        {mobilePublishPackage.imageCount} 张图 · 手机端 Step 1-3 发布
                         {mobilePublishPackage.skippedImageCount ? ` · 跳过 ${mobilePublishPackage.skippedImageCount} 张` : ""}
                       </span>
                       {mobilePublishPackage.publicAccessWarning ? (
@@ -1383,7 +1470,7 @@ export function MatrixDashboard() {
                 ) : (
                   <div className="binding-row">
                     <span>
-                      手机方案会把文案和活动汪原图上传到 Supabase 公开发布包；手机扫码后只有一个“一键导入小红书”动作，不再走电脑网页草稿。
+                      手机方案会把文案和活动汪原图上传到 Supabase 公开发布包；手机扫码后同时显示 3 个上下排列按钮：Step 1 保存图片至手机，Step 2 复制文案，Step 3 打开小红书发布。
                     </span>
                   </div>
                 )}
@@ -1509,15 +1596,76 @@ export function MatrixDashboard() {
           </Panel>
         </section>
       </section>
+      {activeMetricDetails ? (
+        <MetricDetailModal details={activeMetricDetails} onClose={() => setActiveMetricKey(null)} />
+      ) : null}
     </main>
   );
 }
 
-function Metric({ label, value, tone }: { label: string; value: number | string; tone: "mint" | "amber" | "coral" }) {
+function Metric({
+  label,
+  value,
+  tone,
+  onClick
+}: {
+  label: string;
+  value: number | string;
+  tone: "mint" | "amber" | "coral";
+  onClick?: () => void;
+}) {
+  if (!onClick) {
+    return (
+      <div className={`metric ${tone}`}>
+        <strong>{value}</strong>
+        <span>{label}</span>
+      </div>
+    );
+  }
+
   return (
-    <div className={`metric ${tone}`}>
+    <button className={`metric ${tone}`} onClick={onClick} type="button">
       <strong>{value}</strong>
       <span>{label}</span>
+    </button>
+  );
+}
+
+function MetricDetailModal({
+  details,
+  onClose
+}: {
+  details: {
+    title: string;
+    subtitle: string;
+    items: Array<{ title: string; meta: string; body?: string }>;
+  };
+  onClose: () => void;
+}) {
+  return (
+    <div className="metric-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <article className="metric-modal" role="dialog" aria-modal="true" aria-label={details.title} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="metric-modal-heading">
+          <div>
+            <p className="eyebrow">Current Batch</p>
+            <h3>{details.title}</h3>
+            <span>{details.subtitle}</span>
+          </div>
+          <button aria-label="关闭详情" onClick={onClose} type="button">
+            <XIcon aria-hidden="true" size={18} />
+          </button>
+        </div>
+        <div className="metric-detail-list">
+          {details.items.map((item, index) => (
+            <article className="metric-detail-row" key={`${item.title}-${index}`}>
+              <strong>{item.title}</strong>
+              <span>{item.meta}</span>
+              {item.body ? <p>{item.body}</p> : null}
+            </article>
+          ))}
+          {!details.items.length ? <EmptyState text="当前批次还没有明细" /> : null}
+        </div>
+      </article>
     </div>
   );
 }
@@ -1555,6 +1703,65 @@ function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
 
+function createEmptyBatchState(): CurrentBatchState {
+  return {
+    keyword: "",
+    searchTerms: [],
+    referenceCount: 0,
+    draftCount: 0,
+    keywordCount: 0,
+    imageCount: 0,
+    status: "等待新批次",
+    xhsSkippedReason: null
+  };
+}
+
+function buildMetricDetails(
+  key: MetricKey,
+  batch: CurrentBatchState,
+  references: XhsReference[],
+  drafts: Draft[]
+) {
+  if (key === "references") {
+    return {
+      title: "文案参考",
+      subtitle: `${batch.status} · ${batch.referenceCount} 条参考 · ${batch.imageCount} 张活动汪原图`,
+      items: [
+        ...(batch.xhsSkippedReason
+          ? [{ title: "小红书参考已跳过", meta: "降级策略", body: batch.xhsSkippedReason }]
+          : []),
+        ...references.slice(0, batch.referenceCount).map((item) => ({
+          title: item.title,
+          meta: item.sourceUrl || "采集结果",
+          body: item.content
+        }))
+      ]
+    };
+  }
+
+  if (key === "drafts") {
+    return {
+      title: "待审草稿",
+      subtitle: `${batch.status} · 当前批次 ${batch.draftCount} 篇`,
+      items: drafts.slice(0, batch.draftCount).map((draft) => ({
+        title: draft.title,
+        meta: `${draft.accountName} · 质量分 ${draft.qualityScore}`,
+        body: draft.body
+      }))
+    };
+  }
+
+  return {
+    title: "关键词批次",
+    subtitle: batch.keyword ? `本轮关键词：${batch.keyword}` : "等待素材采集启动",
+    items: batch.searchTerms.map((term, index) => ({
+      title: term,
+      meta: index === 0 ? "主搜索词" : "核心相关词",
+      body: index === 0 ? "用于确定本批次素材方向" : "用于扩大活动汪图库匹配范围"
+    }))
+  };
+}
+
 function connectorStatusText(status: ScrapingConnector["status"]) {
   if (status === "ready") return "就绪";
   if (status === "warning") return "待补齐";
@@ -1577,6 +1784,7 @@ function xhsStatusModeLabel(status: XhsLoginStatus | null) {
 
 function xhsStatusPillTone(status: XhsLoginStatus | null) {
   if (status?.verificationMode === "hosted") return "neutral";
+  if (status?.riskBlocked) return "warn";
   return status?.loggedIn || status?.savedLogin ? "ok" : "bad";
 }
 
@@ -1590,7 +1798,9 @@ function eventwangIsHosted(connector: ScrapingConnector | null) {
 
 function eventwangStatusPillTone(connector: ScrapingConnector | null) {
   if (eventwangIsHosted(connector)) return "neutral";
-  return connector?.status === "ready" || eventwangHasSavedLogin(connector) ? "ok" : "bad";
+  if (connector?.status === "ready") return "ok";
+  if (eventwangHasSavedLogin(connector)) return "warn";
+  return "bad";
 }
 
 function eventwangStatusHeadline(connector: ScrapingConnector | null) {
@@ -1612,7 +1822,7 @@ function resetWorkflowSteps(): WorkflowStep[] {
     { key: "text", label: "文案二创", status: "waiting", detail: "待审核" },
     { key: "image", label: "原图配图", status: "waiting", detail: "待审核" },
     { key: "draft", label: "草稿入库", status: "waiting", detail: "待审核" },
-    { key: "send", label: "手机导入", status: "waiting", detail: "不自动发布" }
+    { key: "send", label: "手机发布", status: "waiting", detail: "不自动发布" }
   ];
 }
 

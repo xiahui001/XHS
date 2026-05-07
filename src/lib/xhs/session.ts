@@ -2,6 +2,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import { isHostedRuntime } from "@/lib/runtime/deployment";
+import { getXhsProbeCacheDecision } from "@/lib/xhs/probe-policy";
 
 export type XhsLoginStatus = {
   loggedIn: boolean;
@@ -15,8 +16,11 @@ export type XhsLoginStatus = {
 };
 
 const STORAGE_STATE_PATH = path.join(process.cwd(), ".auth", "xhs.json");
-const LIVE_CHECK_TTL_MS = 5 * 60 * 1000;
-const LIVE_CHECK_TIMEOUT_MS = 45000;
+const LIVE_CHECK_TTL_MS = readDurationMs("XHS_LIVE_CHECK_TTL_MINUTES", 30, 60 * 1000);
+const FRESH_CHECK_COOLDOWN_MS = readDurationMs("XHS_FRESH_CHECK_COOLDOWN_MINUTES", 30, 60 * 1000);
+const RISK_BLOCK_COOLDOWN_MS = readDurationMs("XHS_RISK_BLOCK_COOLDOWN_HOURS", 2, 60 * 60 * 1000);
+const LIVE_CHECK_TIMEOUT_MS = 45_000;
+const LIVE_CHECK_HEADLESS = process.env.XHS_LIVE_CHECK_HEADLESS === "true";
 
 let liveStatusCache: {
   checkedAtMs: number;
@@ -41,11 +45,22 @@ export async function getXhsLoginStatus(options?: { fresh?: boolean }): Promise<
   if (!fileStatus.savedLogin) return fileStatus;
 
   const now = Date.now();
-  if (!options?.fresh && liveStatusCache && now - liveStatusCache.checkedAtMs < LIVE_CHECK_TTL_MS) {
+  const cacheDecision = getXhsProbeCacheDecision({
+    cachedStatus: liveStatusCache?.status ?? null,
+    checkedAtMs: liveStatusCache?.checkedAtMs ?? null,
+    currentLastSavedAt: fileStatus.lastSavedAt,
+    nowMs: now,
+    fresh: Boolean(options?.fresh),
+    ttlMs: LIVE_CHECK_TTL_MS,
+    freshCooldownMs: FRESH_CHECK_COOLDOWN_MS,
+    riskCooldownMs: RISK_BLOCK_COOLDOWN_MS
+  });
+
+  if (cacheDecision.shouldReuse && liveStatusCache) {
     return {
       ...liveStatusCache.status,
       verificationMode: "cache",
-      detail: `${liveStatusCache.status.detail}（${Math.ceil((LIVE_CHECK_TTL_MS - (now - liveStatusCache.checkedAtMs)) / 1000)} 秒内复用真实探测结果）`
+      detail: `${liveStatusCache.status.detail}（为降低探测频率，${formatRemaining(cacheDecision.remainingMs)}内复用真实探测结果）`
     };
   }
 
@@ -55,6 +70,18 @@ export async function getXhsLoginStatus(options?: { fresh?: boolean }): Promise<
     status: liveStatus
   };
   return liveStatus;
+}
+
+function readDurationMs(envName: string, fallback: number, unitMs: number) {
+  const raw = process.env[envName];
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed * unitMs : fallback * unitMs;
+}
+
+function formatRemaining(ms: number) {
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes >= 60) return `${Math.ceil(minutes / 60)}小时`;
+  return `${minutes}分钟`;
 }
 
 async function getStoredXhsLoginStatus(): Promise<XhsLoginStatus> {
@@ -97,16 +124,23 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
   const checkedAt = new Date().toISOString();
 
   try {
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
+    browser = await chromium.launch({
+      headless: LIVE_CHECK_HEADLESS,
+      args: LIVE_CHECK_HEADLESS ? [] : ["--start-minimized"]
+    });
+    const context = await browser.newContext({
+      storageState: STORAGE_STATE_PATH,
+      locale: "zh-CN",
+      viewport: { width: 1360, height: 940 }
+    });
     const page = await context.newPage();
-    page.setDefaultTimeout(12000);
-    await page.goto("https://www.xiaohongshu.com/explore", {
+    page.setDefaultTimeout(12_000);
+    await page.goto("https://www.xiaohongshu.com/", {
       waitUntil: "domcontentloaded",
       timeout: LIVE_CHECK_TIMEOUT_MS
     });
-    await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-    await page.waitForTimeout(1200);
+    await page.waitForLoadState("networkidle", { timeout: 12_000 }).catch(() => {});
+    await page.waitForTimeout(4200);
 
     const result = await page.evaluate(() => {
       const text = document.body?.innerText || "";
@@ -121,8 +155,7 @@ async function probeXhsOnlineStatus(fileStatus: XhsLoginStatus): Promise<XhsLogi
         hasLoginDialog,
         hasLoginUrl,
         hasLoggedInSurface,
-        riskBlocked,
-        title: document.title
+        riskBlocked
       };
     });
 

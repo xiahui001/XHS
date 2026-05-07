@@ -74,6 +74,8 @@ export async function POST(request: Request) {
       requestUrl: request.url,
       appPublicUrl: process.env.APP_PUBLIC_URL,
       nextPublicAppUrl: process.env.NEXT_PUBLIC_APP_URL,
+      vercelProjectProductionUrl: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+      vercelUrl: process.env.VERCEL_URL,
       getHeader: (name) => request.headers.get(name)
     });
     const packageUrl = buildAppPackageUrl(origin.origin, packageId, packageDataUrl);
