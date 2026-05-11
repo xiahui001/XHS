@@ -2,104 +2,71 @@ import { describe, expect, it } from "vitest";
 import { assignEventwangImagesToDrafts } from "./draft-images";
 
 describe("draft image placement", () => {
-  it("assigns downloaded eventwang originals to each draft instead of generating new images", () => {
+  it("defaults to twelve candidate images for one workflow draft", () => {
+    const result = assignEventwangImagesToDrafts([{ id: "draft-1" }], makeImages(12));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].images).toHaveLength(12);
+    expect(result[0].missingImageCount).toBe(0);
+  });
+
+  it("assigns twelve candidate images to each draft without reusing images across drafts", () => {
     const result = assignEventwangImagesToDrafts(
       [{ id: "draft-1" }, { id: "draft-2" }],
-      [
-        {
-          url: "",
-          alt: "已布置",
-          sourceUrl: "https://eventwang.cn/Gallery/detail-1",
-          localPath: "data/eventwang-gallery/a.jpg",
-          styleTag: "已布置",
-          styleBucket: "installed"
-        },
-        {
-          url: "",
-          alt: "美陈",
-          sourceUrl: "https://eventwang.cn/Gallery/detail-2",
-          localPath: "data/eventwang-gallery/b.jpg",
-          styleTag: "美陈",
-          styleBucket: "decor"
-        },
-        {
-          url: "https://cdn.example/c.jpg",
-          alt: "展示",
-          sourceUrl: "https://eventwang.cn/Gallery/detail-3",
-          styleTag: "展示",
-          styleBucket: "display"
-        }
-      ],
-      3
+      makeImages(24),
+      { imagesPerDraft: 12 }
     );
 
-    expect(result).toEqual([
-      {
-        draftId: "draft-1",
-        images: [
-          {
-            prompt: "已布置 · https://eventwang.cn/Gallery/detail-1",
-            localPath: "data/eventwang-gallery/a.jpg",
-            url: "/api/materials/eventwang-file?path=data%2Feventwang-gallery%2Fa.jpg"
-          },
-          {
-            prompt: "美陈 · https://eventwang.cn/Gallery/detail-2",
-            localPath: "data/eventwang-gallery/b.jpg",
-            url: "/api/materials/eventwang-file?path=data%2Feventwang-gallery%2Fb.jpg"
-          },
-          {
-            prompt: "展示 · https://eventwang.cn/Gallery/detail-3",
-            url: "https://cdn.example/c.jpg"
-          }
-        ]
-      },
-      {
-        draftId: "draft-2",
-        images: [
-          {
-            prompt: "美陈 · https://eventwang.cn/Gallery/detail-2",
-            localPath: "data/eventwang-gallery/b.jpg",
-            url: "/api/materials/eventwang-file?path=data%2Feventwang-gallery%2Fb.jpg"
-          },
-          {
-            prompt: "展示 · https://eventwang.cn/Gallery/detail-3",
-            url: "https://cdn.example/c.jpg"
-          },
-          {
-            prompt: "已布置 · https://eventwang.cn/Gallery/detail-1",
-            localPath: "data/eventwang-gallery/a.jpg",
-            url: "/api/materials/eventwang-file?path=data%2Feventwang-gallery%2Fa.jpg"
-          }
-        ]
-      }
-    ]);
+    expect(result).toHaveLength(2);
+    for (const assignment of result) {
+      expect(assignment.images).toHaveLength(12);
+      expect(assignment.images[0].role).toBe("cover");
+      expect(assignment.images.slice(1).every((image) => image.role === "body")).toBe(true);
+      expect(assignment.missingImageCount).toBe(0);
+    }
+
+    const assignedKeys = result.flatMap((assignment) => assignment.images.map((image) => image.usageKey));
+    expect(new Set(assignedKeys).size).toBe(24);
   });
 
-  it("keeps images unique within one draft when asking for cover plus nine images", () => {
-    const images = Array.from({ length: 12 }, (_, index) => ({
-      url: `https://cdn.example/${index}.jpg`,
-      alt: `场景${index}`,
-      sourceUrl: `https://eventwang.cn/Gallery/detail-${index}`,
-      styleTag: "展示",
-      styleBucket: `bucket-${index}`
-    }));
+  it("skips images that were already used by earlier tasks", () => {
+    const result = assignEventwangImagesToDrafts([{ id: "draft-1" }], makeImages(14), {
+      imagesPerDraft: 12,
+      usedImageKeys: new Set(["local:data/eventwang-gallery/00.jpg", "local:data/eventwang-gallery/01.jpg"])
+    });
 
-    const result = assignEventwangImagesToDrafts([{ id: "draft-1" }], images, 10);
-
-    expect(result[0].images).toHaveLength(10);
-    expect(new Set(result[0].images.map((image) => image.url)).size).toBe(10);
+    expect(result[0].images).toHaveLength(12);
+    expect(result[0].images.map((image) => image.usageKey)).not.toContain("local:data/eventwang-gallery/00.jpg");
+    expect(result[0].images.map((image) => image.usageKey)).not.toContain("local:data/eventwang-gallery/01.jpg");
   });
 
-  it("uses each available image at most once within a draft when fewer than ten images exist", () => {
-    const images = Array.from({ length: 6 }, (_, index) => ({
-      url: `https://cdn.example/${index}.jpg`,
-      alt: `场景${index}`,
-      sourceUrl: `https://eventwang.cn/Gallery/detail-${index}`
-    }));
+  it("fails before assigning when there are not enough unused unique images by default", () => {
+    expect(() =>
+      assignEventwangImagesToDrafts([{ id: "draft-1" }, { id: "draft-2" }], makeImages(23), {
+        imagesPerDraft: 12
+      })
+    ).toThrow(/24/);
+  });
 
-    const result = assignEventwangImagesToDrafts([{ id: "draft-1" }], images, 10);
+  it("assigns available unique images when partial assignment is allowed", () => {
+    const result = assignEventwangImagesToDrafts([{ id: "draft-1" }, { id: "draft-2" }], makeImages(13), {
+      imagesPerDraft: 12,
+      allowPartial: true
+    });
 
-    expect(result[0].images).toHaveLength(6);
-    expect(new Set(result[0].images.map((image) => image.url)).size).toBe(6);
+    expect(result.map((assignment) => assignment.images.length)).toEqual([12, 1]);
+    expect(result.map((assignment) => assignment.missingImageCount)).toEqual([0, 11]);
+    expect(new Set(result.flatMap((assignment) => assignment.images.map((image) => image.usageKey))).size).toBe(13);
   });
 });
+
+function makeImages(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    url: "",
+    alt: `scene ${index}`,
+    sourceUrl: `https://eventwang.cn/Gallery/detail-${index}`,
+    localPath: `data/eventwang-gallery/${String(index).padStart(2, "0")}.jpg`,
+    styleTag: "display",
+    styleBucket: `bucket-${index}`
+  }));
+}

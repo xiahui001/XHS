@@ -1,4 +1,5 @@
 import { buildEventwangMediaUrl } from "../collectors/eventwang-gallery";
+import { WORKFLOW_IMAGES_PER_DRAFT } from "../workflow/run-config";
 
 export type MobilePublishImageRef = {
   url?: string;
@@ -33,7 +34,9 @@ export type MobilePublishPackage = {
   }>;
 };
 
-export function selectMobilePublishImages(draft: MobilePublishDraft, maxImages = 10) {
+export const REQUIRED_MOBILE_PUBLISH_IMAGE_COUNT = WORKFLOW_IMAGES_PER_DRAFT;
+
+export function selectMobilePublishImages(draft: MobilePublishDraft, maxImages = REQUIRED_MOBILE_PUBLISH_IMAGE_COUNT) {
   const source = draft.publishImages?.length ? draft.publishImages : draft.generatedImages ?? [];
   const seen = new Set<string>();
   const selected: Array<{ url: string; localPath?: string; filename: string }> = [];
@@ -67,7 +70,7 @@ export function buildMobilePublishPackage(draft: MobilePublishDraft, packageId: 
   const title = draft.title.trim();
   const body = draft.body.trim();
   const tags = dedupeTags(draft.tags ?? []);
-  const imageFiles = selectMobilePublishImages(draft, 10);
+  const imageFiles = selectMobilePublishImages(draft, REQUIRED_MOBILE_PUBLISH_IMAGE_COUNT);
   const imageUrls = imageFiles.map((image) => image.url);
 
   return {
@@ -227,7 +230,7 @@ export function buildMobilePublishHtml(pkg: MobilePublishPackage) {
         <button class="step-button" id="save-images-btn" type="button">
           <span>Step 1</span>
           <strong>保存图片至手机</strong>
-          <small>系统会弹出保存 ${pkg.imageUrls.length} 张图的选择</small>
+          <small>${pkg.imageUrls.length ? `系统会弹出保存 ${pkg.imageUrls.length} 张图的选择` : "当前无配图，可跳过此步"}</small>
         </button>
         <button class="step-button" id="copy-text-btn" type="button">
           <span>Step 2</span>
@@ -266,9 +269,11 @@ export function buildMobilePublishHtml(pkg: MobilePublishPackage) {
     const openXhsButton = document.getElementById("open-xhs-btn");
 
     shareSource.textContent = data.shareText;
-    imagesRoot.innerHTML = data.imageUrls.map((url, index) => (
-      '<img alt="图片 ' + (index + 1) + '" src="' + url + '" />'
-    )).join("");
+    imagesRoot.innerHTML = data.imageUrls.length
+      ? data.imageUrls.map((url, index) => (
+        '<img alt="图片 ' + (index + 1) + '" src="' + url + '" />'
+      )).join("")
+      : '<p class="note">当前发布包没有配图，请直接复制文案后在小红书手动补图。</p>';
 
     async function buildShareFiles(imageUrls) {
       const files = [];
@@ -288,6 +293,10 @@ export function buildMobilePublishHtml(pkg: MobilePublishPackage) {
       saveImagesButton.disabled = true;
       status.textContent = "正在准备 " + data.imageUrls.length + " 张图片";
       try {
+        if (!data.imageUrls.length) {
+          status.textContent = "当前没有配图，请跳过 Step 1，直接复制文案并打开小红书。";
+          return;
+        }
         const files = await buildShareFiles(data.imageUrls);
         if (!navigator.share) {
           throw new Error("当前浏览器不支持系统分享，请用手机系统浏览器重新扫码");

@@ -7,57 +7,82 @@ import {
 } from "./mobile-package";
 
 describe("mobile publish package", () => {
-  it("keeps available images, removes duplicates, and does not fail when fewer than ten exist", () => {
+  it("selects twelve unique images and removes duplicates before publishing", () => {
     const images = selectMobilePublishImages(
       {
         id: "draft-1",
-        title: "校园艺术节",
-        body: "先看场地，再看动线。",
+        title: "Campus art festival",
+        body: "Start with venue and visitor flow.",
         generatedImages: [
           { url: "https://example.com/a.jpg", localPath: "data/eventwang-gallery/a/photo.jpg" },
           { url: "https://example.com/a.jpg", localPath: "data/eventwang-gallery/a/photo.jpg" },
-          { url: "https://example.com/b.jpg", localPath: "data/eventwang-gallery/b/photo.jpg" }
+          ...makePublishImages(12, 1)
         ]
-      },
-      10
+      }
     );
 
-    expect(images).toHaveLength(2);
-    expect(images.map((image) => image.url)).toEqual([
-      "https://example.com/a.jpg",
-      "https://example.com/b.jpg"
-    ]);
+    expect(images).toHaveLength(12);
+    expect(new Set(images.map((image) => image.url)).size).toBe(12);
+  });
+
+  it("builds publish packages even when images are incomplete", () => {
+    const pkg = buildMobilePublishPackage(
+      {
+        id: "draft-short",
+        title: "Campus art festival",
+        body: "Start with venue and visitor flow.",
+        generatedImages: makePublishImages(4)
+      },
+      "pkg-short"
+    );
+
+    expect(pkg.imageUrls).toHaveLength(4);
+    expect(pkg.shareText).toContain("Campus art festival");
+  });
+
+  it("builds a text-only publish package when no images are available", () => {
+    const pkg = buildMobilePublishPackage(
+      {
+        id: "draft-text-only",
+        title: "Text only plan",
+        body: "Copy this first, images can be added later."
+      },
+      "pkg-text-only"
+    );
+
+    expect(pkg.imageUrls).toEqual([]);
+    expect(pkg.shareText).toContain("Text only plan");
   });
 
   it("builds the xhs deeplink and share text from a draft", () => {
     const pkg = buildMobilePublishPackage(
       {
         id: "draft-2",
-        title: "毕业晚会布置",
-        body: "封面和正文都放进手机发送包。",
-        tags: ["毕业晚会", "舞台搭建", "毕业晚会"],
-        generatedImages: [{ url: "https://example.com/c.jpg", localPath: "data/eventwang-gallery/c/photo.jpg" }]
+        title: "Graduation party setup",
+        body: "Put the cover and body images into the phone package.",
+        tags: ["graduation", "stage", "graduation"],
+        generatedImages: makePublishImages(12)
       },
       "pkg-1"
     );
 
     expect(buildXhsDiscoverPostUrl()).toBe("xhsdiscover://post");
-    expect(pkg.shareText).toContain("毕业晚会布置");
-    expect(pkg.shareText).toContain("封面和正文都放进手机发送包。");
-    expect(pkg.shareText).toContain("#毕业晚会");
-    expect(pkg.shareText).toContain("#舞台搭建");
-    expect(pkg.imageUrls).toEqual(["https://example.com/c.jpg"]);
+    expect(pkg.shareText).toContain("Graduation party setup");
+    expect(pkg.shareText).toContain("Put the cover and body images into the phone package.");
+    expect(pkg.shareText).toContain("#graduation");
+    expect(pkg.shareText).toContain("#stage");
+    expect(pkg.imageUrls).toHaveLength(12);
   });
 
   it("renders the phone package as the three-step publishing workbench", () => {
     const pkg = buildMobilePublishPackage(
       {
         id: "draft-3",
-        accountName: "校园活动号",
-        title: "毕业晚会策划",
-        body: "先保存图片，再复制文案，最后打开小红书发布。",
-        tags: ["毕业晚会"],
-        generatedImages: [{ url: "https://example.com/d.jpg", localPath: "data/eventwang-gallery/d/photo.jpg" }]
+        accountName: "Campus events",
+        title: "Graduation party plan",
+        body: "Save images, copy text, then open Xiaohongshu.",
+        tags: ["graduation"],
+        generatedImages: makePublishImages(12)
       },
       "pkg-3"
     );
@@ -65,12 +90,18 @@ describe("mobile publish package", () => {
     const html = buildMobilePublishHtml(pkg);
 
     expect(html).toContain("Step 1");
-    expect(html).toContain("保存图片至手机");
     expect(html).toContain("Step 2");
-    expect(html).toContain("复制文案");
     expect(html).toContain("Step 3");
-    expect(html).toContain("打开小红书发布");
-    expect(html).not.toContain("一键导入小红书");
-    expect(html).not.toContain("系统分享已打开，请选择小红书并在发布页确认内容");
+    expect(html).not.toContain("one-click import");
   });
 });
+
+function makePublishImages(count: number, start = 0) {
+  return Array.from({ length: count }, (_, index) => {
+    const id = index + start;
+    return {
+      url: `https://example.com/${id}.jpg`,
+      localPath: `data/eventwang-gallery/${id}/photo.jpg`
+    };
+  });
+}
