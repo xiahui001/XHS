@@ -22,10 +22,10 @@ export default function MobilePublishPage() {
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href);
-    const nextDataUrl = currentUrl.searchParams.get("data")?.trim() ?? "";
+    const nextDataUrl = resolvePackageDataUrl(currentUrl);
 
     if (!nextDataUrl) {
-      setStatus("缺少发布包数据链接");
+      setStatus("发布包链接无效，请重新生成二维码");
       return;
     }
 
@@ -159,6 +159,14 @@ export default function MobilePublishPage() {
       )}
     </main>
   );
+}
+
+function resolvePackageDataUrl(currentUrl: URL) {
+  const dataUrl = currentUrl.searchParams.get("data")?.trim();
+  if (dataUrl) return dataUrl;
+
+  const packageId = currentUrl.pathname.split("/").filter(Boolean).at(-1)?.trim() ?? "";
+  return packageId ? `/api/mobile-publish-packages/${packageId}` : "";
 }
 
 async function buildShareFiles(imageUrls: string[]) {

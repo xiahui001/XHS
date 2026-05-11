@@ -19,6 +19,8 @@ export const runtime = "nodejs";
 const BUCKET = "xhs-mobile-publish-packages";
 const EVENTWANG_ROOT = path.join(process.cwd(), "data", "eventwang-gallery");
 const LOCAL_PACKAGE_ROOT = path.join(process.cwd(), "data", "mobile-publish-packages");
+const IMAGE_UPLOAD_CONCURRENCY = 4;
+const STORAGE_UPLOAD_RETRY_DELAYS_MS = [150, 500];
 
 const imageSchema = z.object({
   prompt: z.string().optional(),
@@ -48,7 +50,7 @@ type SupabaseServerClient = NonNullable<ReturnType<typeof createSupabaseServerCl
 type StoredPackage = {
   publishPackage: MobilePublishPackage;
   packageDataUrl: string;
-  storageProvider: "supabase" | "local" | "inline";
+  storageProvider: "supabase" | "local";
   bucket: string | null;
   storagePath: string;
   skippedImageCount: number;
@@ -63,7 +65,7 @@ type MobilePublishPackageResponse = {
   imageCount: number;
   imageUrls: string[];
   skippedImageCount: number;
-  storageProvider: "supabase" | "local" | "inline";
+  storageProvider: "supabase" | "local";
   bucket: string | null;
   storagePath: string;
   storageError?: string;
@@ -114,7 +116,7 @@ export async function POST(request: Request) {
 
     const storedPackage = storeResult.storedPackage;
     const responseOrigin = storedPackage.storageProvider === "local" ? localOrigin : publicOrigin;
-    const packageUrl = buildAppPackageUrl(responseOrigin.origin, packageId, storedPackage.packageDataUrl);
+    const packageUrl = buildAppPackageUrl(responseOrigin.origin, packageId);
 
     return ok({
       packageId,
@@ -182,11 +184,6 @@ async function storeFallbackPackage(
     return { kind: "remote", data: remotePackage };
   }
 
-  const inlinePackage = createInlinePublicPackage(basePackage, packageId, storageError, fallbackOptions);
-  if (inlinePackage) {
-    return { kind: "remote", data: inlinePackage };
-  }
-
   return {
     kind: "stored",
     storedPackage: await storeLocalPackage(basePackage, packageId, origin, storageError)
@@ -222,42 +219,6 @@ async function createPackageOnPublicOrigin({
   }
 }
 
-function createInlinePublicPackage(
-  basePackage: MobilePublishPackage,
-  packageId: string,
-  storageError: unknown,
-  { publicOrigin, localOrigin }: StorePackageFallbackOptions
-): MobilePublishPackageResponse | null {
-  if (!publicOrigin.phoneScanReady || publicOrigin.origin === localOrigin.origin) return null;
-
-  const portableImages = basePackage.imageFiles.filter((image) => isPublicHttpUrl(image.url));
-  const publishPackage: MobilePublishPackage = {
-    ...basePackage,
-    imageFiles: portableImages,
-    imageUrls: portableImages.map((image) => image.url)
-  };
-  const packageDataUrl = buildInlinePackageDataUrl(publishPackage);
-
-  return {
-    packageId,
-    packageUrl: buildAppPackageUrl(publicOrigin.origin, packageId, packageDataUrl),
-    packageDataUrl,
-    deeplinkUrl: publishPackage.deeplinkUrl,
-    shareText: publishPackage.shareText,
-    imageCount: publishPackage.imageUrls.length,
-    imageUrls: publishPackage.imageUrls,
-    skippedImageCount: Math.max(0, basePackage.imageFiles.length - portableImages.length),
-    storageProvider: "inline",
-    bucket: null,
-    storagePath: "inline:package-data",
-    storageError: errorMessage(storageError),
-    phoneScanReady: publicOrigin.phoneScanReady,
-    shareReady: publicOrigin.shareReady,
-    publicAccessWarning: publicOrigin.warning,
-    createdAt: new Date().toISOString()
-  };
-}
-
 async function storeSupabasePackage(
   basePackage: MobilePublishPackage,
   packageId: string,
@@ -271,13 +232,13 @@ async function storeSupabasePackage(
     imageUrls: uploadedImages.map((image) => image.url)
   };
   const packageDataPath = `packages/${packageId}/package.json`;
-  const packageDataUpload = await supabase.storage
-    .from(BUCKET)
-    .upload(packageDataPath, Buffer.from(JSON.stringify(publishPackage, null, 2), "utf8"), {
+  const packageDataUpload = await uploadStorageObjectWithRetry(() =>
+    supabase.storage.from(BUCKET).upload(packageDataPath, Buffer.from(JSON.stringify(publishPackage, null, 2), "utf8"), {
       contentType: "application/json",
       cacheControl: "60",
       upsert: true
-    });
+    })
+  );
   if (packageDataUpload.error) throw packageDataUpload.error;
 
   return {
@@ -364,11 +325,10 @@ function buildPoolDraftImageSources(result: EventwangImagePoolResult): DraftImag
   }));
 }
 
-function buildAppPackageUrl(origin: string, packageId: string, packageDataUrl: string) {
+function buildAppPackageUrl(origin: string, packageId: string) {
   const url = new URL(origin);
   url.pathname = `/mobile-publish/${encodeURIComponent(packageId)}`;
   url.search = "";
-  url.searchParams.set("data", packageDataUrl);
   return url.toString();
 }
 
@@ -377,11 +337,6 @@ function buildLocalPackageDataUrl(origin: string, packageId: string) {
   url.pathname = `/api/mobile-publish-packages/${encodeURIComponent(packageId)}`;
   url.search = "";
   return url.toString();
-}
-
-function buildInlinePackageDataUrl(publishPackage: MobilePublishPackage) {
-  const payload = JSON.stringify(publishPackage);
-  return `data:application/json;base64,${Buffer.from(payload, "utf8").toString("base64")}`;
 }
 
 function buildPublicAccessWarning(existingWarning: string | null, storedPackage: StoredPackage) {
@@ -420,7 +375,9 @@ async function uploadPackageImages(
   if (!images.length) return [];
 
   const root = await realpath(EVENTWANG_ROOT);
-  const uploaded = await Promise.all(images.map((image) => uploadPackageImage(image, packageId, root, supabase)));
+  const uploaded = await mapWithConcurrency(images, IMAGE_UPLOAD_CONCURRENCY, (image) =>
+    uploadPackageImage(image, packageId, root, supabase)
+  );
 
   return uploaded.filter((image): image is UploadableImage => Boolean(image));
 }
@@ -443,18 +400,76 @@ async function uploadPackageImage(
   const file = await readFile(resolvedPath);
   const filename = safeFilename(image.filename || path.basename(resolvedPath));
   const storagePath = `packages/${packageId}/images/${filename}`;
-  const uploadedFile = await supabase.storage.from(BUCKET).upload(storagePath, file, {
-    contentType: contentTypeForPath(resolvedPath),
-    cacheControl: "3600",
-    upsert: true
-  });
-  if (uploadedFile.error) throw uploadedFile.error;
+  const uploadedFile = await uploadStorageObjectWithRetry(() =>
+    supabase.storage.from(BUCKET).upload(storagePath, file, {
+      contentType: contentTypeForPath(resolvedPath),
+      cacheControl: "3600",
+      upsert: true
+    })
+  );
+  if (uploadedFile.error) return null;
 
   return {
     ...image,
     url: supabase.storage.from(BUCKET).getPublicUrl(storagePath).data.publicUrl,
     localPath: resolved.localPath
   };
+}
+
+async function uploadStorageObjectWithRetry<T extends { error: unknown }>(operation: () => Promise<T>): Promise<T> {
+  let lastResult: T | null = null;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= STORAGE_UPLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const result = await operation();
+      if (!result.error) return result;
+
+      lastResult = result;
+      lastError = result.error;
+    } catch (error) {
+      lastError = error;
+      lastResult = null;
+    }
+
+    if (!isTransientStorageUploadError(lastError) || attempt === STORAGE_UPLOAD_RETRY_DELAYS_MS.length) break;
+    await wait(STORAGE_UPLOAD_RETRY_DELAYS_MS[attempt]);
+  }
+
+  if (lastResult) return lastResult;
+  throw lastError instanceof Error ? lastError : new Error(errorMessage(lastError));
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await worker(items[currentIndex], currentIndex);
+      }
+    })
+  );
+
+  return results;
+}
+
+function isTransientStorageUploadError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  const name = typeof error === "object" && error !== null && "name" in error ? String(error.name).toLowerCase() : "";
+  return name.includes("storageunknown") || message.includes("fetch failed") || message.includes("network");
+}
+
+function wait(delayMs: number) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 async function resolveFirstExistingEventwangPath(root: string, localPaths: string[]) {

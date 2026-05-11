@@ -101,6 +101,80 @@ describe("/api/mobile-publish-packages", () => {
     expect(payload.data.imageCount).toBe(3);
   });
 
+  it("limits Supabase image upload bursts so transient network failures do not cascade", async () => {
+    await writeTestImages(6);
+    const deferredUploads = Array.from({ length: 6 }, () => createDeferred());
+    const imageUploadPaths: string[] = [];
+
+    uploadFile.mockImplementation((storagePath: string) => {
+      if (storagePath.includes("/images/")) {
+        imageUploadPaths.push(storagePath);
+        return deferredUploads[imageUploadPaths.length - 1].promise;
+      }
+
+      return Promise.resolve({ error: null });
+    });
+
+    const responsePromise = POST(
+      jsonRequest({
+        draft: {
+          id: "draft-limited-concurrency",
+          title: "Limited package",
+          body: "Upload images in a bounded burst.",
+          generatedImages: makeDraftImages(6)
+        }
+      })
+    );
+
+    await waitForImageUploadStarts(imageUploadPaths, 4);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(imageUploadPaths).toHaveLength(4);
+
+    deferredUploads[0].resolve({ error: null });
+    await waitForImageUploadStarts(imageUploadPaths, 5);
+
+    for (const upload of deferredUploads.slice(1)) upload.resolve({ error: null });
+
+    const response = await responsePromise;
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.data.storageProvider).toBe("supabase");
+    expect(payload.data.imageCount).toBe(6);
+  });
+
+  it("retries transient Supabase image upload failures instead of falling back to a local package", async () => {
+    await writeTestImages(1);
+    let imageUploadAttempt = 0;
+    uploadFile.mockImplementation((storagePath: string) => {
+      if (storagePath.includes("/images/")) {
+        imageUploadAttempt += 1;
+        return Promise.resolve({
+          error: imageUploadAttempt === 1 ? new Error("fetch failed") : null
+        });
+      }
+
+      return Promise.resolve({ error: null });
+    });
+
+    const response = await POST(
+      jsonRequest({
+        draft: {
+          id: "draft-retry-image-upload",
+          title: "Retry package",
+          body: "Retry transient image upload failures.",
+          generatedImages: makeDraftImages(1)
+        }
+      })
+    );
+    const payload = await response.json();
+
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload.data.storageProvider).toBe("supabase");
+    expect(payload.data.imageCount).toBe(1);
+    expect(imageUploadAttempt).toBe(2);
+  });
+
   it("backfills draft library phone packages from the current account image pool", async () => {
     process.env.EVENTWANG_IMAGE_POOL_ROOT = path.join(
       process.cwd(),
@@ -128,6 +202,11 @@ describe("/api/mobile-publish-packages", () => {
 
     expect(response.status, JSON.stringify(payload)).toBe(200);
     expect(payload.data.imageCount).toBe(12);
+    expect(payload.data.storageProvider).toBe("supabase");
+    expect(payload.data.packageDataUrl).toMatch(/^https:\/\/storage\.local\/packages\/[^/]+\/package\.json$/);
+    expect(payload.data.packageUrl).toMatch(/^http:\/\/localhost\/mobile-publish\/[^?]+$/);
+    expect(payload.data.packageUrl).not.toContain("?data=");
+    expect(payload.data.packageUrl.length).toBeLessThan(180);
     expect(
       uploadFile.mock.calls.filter(([storagePath]) => String(storagePath).includes("/images/"))
     ).toHaveLength(12);
@@ -180,8 +259,7 @@ describe("/api/mobile-publish-packages", () => {
     await mkdir(process.env.EVENTWANG_IMAGE_POOL_ROOT, { recursive: true });
     const remotePackage = {
       packageId: "remote-package",
-      packageUrl:
-        "https://xhs-sandy.vercel.app/mobile-publish/remote-package?data=https%3A%2F%2Fstorage.local%2Fpackage.json",
+      packageUrl: "https://xhs-sandy.vercel.app/mobile-publish/remote-package",
       packageDataUrl: "https://storage.local/package.json",
       deeplinkUrl: "xhsdiscover://post",
       shareText: "remote share text",
@@ -276,12 +354,13 @@ describe("/api/mobile-publish-packages", () => {
     expect(payload.data.imageCount).toBe(0);
     expect(payload.data.storageProvider).toBe("local");
     expect(payload.data.packageDataUrl).toMatch(/^http:\/\/localhost\/api\/mobile-publish-packages\/[^/]+$/);
-    expect(payload.data.packageUrl).toMatch(/^http:\/\/localhost\/mobile-publish\/[^?]+\?data=/);
-    expect(payload.data.packageUrl).toContain(encodeURIComponent(payload.data.packageDataUrl));
+    expect(payload.data.packageUrl).toMatch(/^http:\/\/localhost\/mobile-publish\/[^?]+$/);
+    expect(payload.data.packageUrl).not.toContain("?data=");
+    expect(payload.data.packageUrl.length).toBeLessThan(180);
     expect(payload.data.phoneScanReady).toBe(false);
   });
 
-  it("uses an inline public Vercel package when the public API fallback is unavailable", async () => {
+  it("falls back to a short local package when the public API fallback is unavailable", async () => {
     process.env.EVENTWANG_IMAGE_POOL_ROOT = path.join(
       process.cwd(),
       "data",
@@ -322,12 +401,12 @@ describe("/api/mobile-publish-packages", () => {
     const payload = await response.json();
 
     expect(response.status, JSON.stringify(payload)).toBe(200);
-    expect(payload.data.storageProvider).toBe("inline");
-    expect(payload.data.packageUrl).toMatch(/^https:\/\/xhs-sandy\.vercel\.app\/mobile-publish\/[^?]+\?data=/);
-    expect(payload.data.packageDataUrl).toMatch(/^data:application\/json;base64,/);
-    expect(payload.data.phoneScanReady).toBe(true);
-    expect(payload.data.shareReady).toBe(true);
-    expect(payload.data.publicAccessWarning).toBeNull();
+    expect(payload.data.storageProvider).toBe("local");
+    expect(payload.data.packageUrl).toMatch(/^http:\/\/localhost\/mobile-publish\/[^?]+$/);
+    expect(payload.data.packageUrl).not.toContain("?data=");
+    expect(payload.data.packageDataUrl).toMatch(/^http:\/\/localhost\/api\/mobile-publish-packages\/[^/]+$/);
+    expect(payload.data.phoneScanReady).toBe(false);
+    expect(payload.data.publicAccessWarning).toContain("Supabase Storage");
   });
 });
 

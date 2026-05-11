@@ -269,6 +269,9 @@ export function MatrixDashboard() {
   const [activeMetricKey, setActiveMetricKey] = useState<MetricKey | null>(null);
   const [currentBatch, setCurrentBatch] = useState<CurrentBatchState>(() => createEmptyBatchState());
   const draftDetailRef = useRef<HTMLElement | null>(null);
+  const autoMobilePackageDraftIdsRef = useRef<Set<string>>(new Set());
+  const mobilePackageInFlightDraftIdRef = useRef<string | null>(null);
+  const selectedDraftIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void bootstrapAuthState();
@@ -301,6 +304,20 @@ export function MatrixDashboard() {
     () => drafts.find((draft) => draft.id === selectedDraftId) ?? drafts[0] ?? null,
     [drafts, selectedDraftId]
   );
+
+  useEffect(() => {
+    selectedDraftIdRef.current = selectedDraft?.id ?? null;
+  }, [selectedDraft?.id]);
+
+  useEffect(() => {
+    if (activeSection !== "section-3" || !selectedDraft) return;
+    if (autoMobilePackageDraftIdsRef.current.has(selectedDraft.id)) return;
+    if (mobilePackageInFlightDraftIdRef.current) return;
+
+    autoMobilePackageDraftIdsRef.current.add(selectedDraft.id);
+    void createMobilePublishPackage(selectedDraft);
+  }, [activeSection, selectedDraft]);
+
   const keywordSelectionLabel =
     keywordSelection === DEFAULT_KEYWORD_OPTION ? "默认随机" : keywordSelection || "未选择";
   const workflowBusy = busyAction === "workflow" || busyAction === "workflow-step";
@@ -907,40 +924,45 @@ export function MatrixDashboard() {
     setStatus("草稿已入库，请选择一篇生成手机三步发布码；不会自动发布");
   }
 
-  async function createMobilePublishPackage() {
-    if (!selectedDraft) {
-      setStatus("请先选择一篇草稿");
+  async function createMobilePublishPackage(draftForRequest = selectedDraft) {
+    if (!draftForRequest) {
+      setStatus("\u8bf7\u5148\u9009\u62e9\u4e00\u7bc7\u8349\u7a3f");
       return;
     }
-    if (!selectedDraft.generatedImages?.length) {
-      setStatus("请先给草稿应用活动汪原图");
-      return;
-    }
+    if (mobilePackageInFlightDraftIdRef.current) return;
 
+    mobilePackageInFlightDraftIdRef.current = draftForRequest.id;
     setBusyAction("mobile-publish-package");
     setMobilePublishPackage(null);
-    setStatus("正在上传草稿图片并生成手机发布包");
+    setStatus(`\u6b63\u5728\u540e\u53f0\u751f\u6210\u624b\u673a\u53d1\u5e03\u5305\uff1a\u5f53\u524d\u8349\u7a3f ${draftForRequest.generatedImages?.length ?? 0} \u5f20\u56fe`);
 
     try {
       const response = await postJson<MobilePublishPackageResult>("/api/mobile-publish-packages", {
-        draft: selectedDraft
+        draft: draftForRequest
       });
 
       if (!response.ok || !response.data) {
-        throw new Error(response.error?.message || "手机发布包生成失败");
+        throw new Error(response.error?.message || "\u624b\u673a\u53d1\u5e03\u5305\u751f\u6210\u5931\u8d25");
       }
 
-      setMobilePublishPackage(response.data);
-      setSelectedDraftId(selectedDraft.id);
-      setActiveSection("section-3");
-      setStatus(
-        response.data.publicAccessWarning ||
-          `手机三步发布码已生成：${response.data.imageCount} 张图；扫码后按 Step 1 保存图片、Step 2 复制文案、Step 3 打开小红书发布`
-      );
+      if (selectedDraftIdRef.current === draftForRequest.id) {
+        setMobilePublishPackage(response.data);
+        setSelectedDraftId(draftForRequest.id);
+        setActiveSection("section-3");
+        setStatus(
+          response.data.publicAccessWarning ||
+            `\u624b\u673a\u4e09\u6b65\u53d1\u5e03\u7801\u5df2\u751f\u6210\uff1a${response.data.imageCount} \u5f20\u56fe\uff1b\u626b\u7801\u540e\u6309 Step 1 \u4fdd\u5b58\u56fe\u7247\u3001Step 2 \u590d\u5236\u6587\u6848\u3001Step 3 \u6253\u5f00\u5c0f\u7ea2\u4e66\u53d1\u5e03`
+        );
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "手机发布包生成失败");
+      if (selectedDraftIdRef.current === draftForRequest.id) {
+        setStatus(error instanceof Error ? error.message : "\u624b\u673a\u53d1\u5e03\u5305\u751f\u6210\u5931\u8d25");
+      }
     } finally {
-      setBusyAction(null);
+      if (mobilePackageInFlightDraftIdRef.current === draftForRequest.id) {
+        mobilePackageInFlightDraftIdRef.current = null;
+        setBusyAction(null);
+      }
     }
   }
 
@@ -1332,8 +1354,8 @@ export function MatrixDashboard() {
                 ) : null}
                 <button
                   className="wide-button"
-                  disabled={busyAction === "mobile-publish-package" || !selectedDraft.generatedImages?.length}
-                  onClick={createMobilePublishPackage}
+                  disabled={busyAction === "mobile-publish-package"}
+                  onClick={() => void createMobilePublishPackage()}
                   type="button"
                 >
                   <QrCode aria-hidden="true" size={16} />
