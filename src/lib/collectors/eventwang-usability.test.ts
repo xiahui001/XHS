@@ -25,6 +25,20 @@ describe("eventwang usability", () => {
     ).toBeNull();
   });
 
+  it("rejects partial results when a production image minimum is requested", () => {
+    expect(
+      getEventwangUsabilityError(
+        {
+          selectedCount: 29,
+          imageCount: 29,
+          styleBucketCount: 5,
+          requiredStyleBuckets: 5
+        },
+        30
+      )
+    ).toMatch(/30/);
+  });
+
   it("accepts limited style buckets when image collection is partial", () => {
     expect(
       getEventwangUsabilityError({

@@ -29,6 +29,7 @@ export type GeneratedDraft = {
     url: string;
     localPath?: string;
   }>;
+  readAt?: string | null;
   qualityScore: number;
   qualityNotes: string[];
   status: "pending_review" | "selected" | "needs_edit" | "published" | "discarded";

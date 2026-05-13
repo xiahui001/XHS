@@ -4,6 +4,7 @@ import {
   buildGlobalChecks,
   createDefaultWorkspaceState,
   createKeywordPreset,
+  normalizeWorkspacePrompts,
   pickRandomKeyword,
   planKeywordDraftBatches
 } from "./state";
@@ -17,6 +18,28 @@ describe("workspace state", () => {
     expect(state.binding.detail).toContain("手机发布账号");
     expect(state.prompts.textRemix).toContain("文案二创");
     expect(state.prompts.imageRemix).toContain("图片二创");
+  });
+
+  it("defaults prompts toward selected account accuracy, creativity, and hotspot capture", () => {
+    const state = createDefaultWorkspaceState("user-1");
+
+    expect(state.prompts.textRemix).toContain("已选领域号");
+    expect(state.prompts.textRemix).toContain("热点");
+    expect(state.prompts.textRemix).toContain("创造性");
+    expect(state.prompts.imageRemix).toContain("已选领域号");
+    expect(state.prompts.imageRemix).toContain("图片抓取");
+    expect(state.prompts.imageRemix).toContain("准确性");
+  });
+
+  it("upgrades legacy default prompts without overwriting custom prompt edits", () => {
+    const fallback = createDefaultWorkspaceState("user-1").prompts;
+    const prompts = normalizeWorkspacePrompts({
+      textRemix: "你是小红书活动策划账号的文案二创编辑。基于用户采集素材重写，不照搬原文，保留可执行细节，输出适合对应账号定位的笔记草稿。",
+      imageRemix: "保留我的自定义图片 Prompt"
+    });
+
+    expect(prompts.textRemix).toBe(fallback.textRemix);
+    expect(prompts.imageRemix).toBe("保留我的自定义图片 Prompt");
   });
 
   it("maps pipeline facts into traffic-light global checks", () => {

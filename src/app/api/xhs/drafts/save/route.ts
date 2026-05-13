@@ -49,13 +49,18 @@ type ExecFileFailure = Error & {
 
 const EVENTWANG_ROOT = path.join(process.cwd(), "data", "eventwang-gallery");
 const JOB_ROOT = path.join(process.cwd(), "data", "xhs-draft-jobs");
+const REQUIRED_XHS_DRAFT_IMAGE_COUNT = 10;
 
 export async function POST(request: Request) {
   try {
     const input = await parseJson(request, schema);
     const imagePaths = await resolveDraftImagePaths(input.draft);
-    if (!imagePaths.length) {
-      return fail("XHS_DRAFT_IMAGES_REQUIRED", "草稿没有可上传的活动汪本地原图", 400);
+    if (imagePaths.length !== REQUIRED_XHS_DRAFT_IMAGE_COUNT) {
+      return fail(
+        "XHS_DRAFT_IMAGE_COUNT_REQUIRED",
+        `小红书草稿需要封面+9张活动汪本地原图，当前 ${imagePaths.length} 张。`,
+        400
+      );
     }
 
     const jobId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${safeId(input.draft.id)}`;

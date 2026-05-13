@@ -367,6 +367,11 @@ a:focus-visible {
   flex: 1;
 }
 
+.binding-row.warn {
+  border-color: rgba(183, 129, 45, 0.32);
+  background: rgba(255, 246, 228, 0.72);
+}
+
 .account-console {
   display: grid;
   gap: 12px;
@@ -1137,13 +1142,75 @@ textarea {
 
 .draft-row {
   display: grid;
-  grid-template-columns: 1fr 54px;
+  grid-template-columns: 1fr;
   gap: 12px;
   align-items: center;
   width: 100%;
   padding: 12px;
   color: inherit;
   text-align: left;
+}
+
+.draft-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.draft-row-group {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.draft-row-group + .draft-row-group {
+  margin-top: 4px;
+}
+
+.draft-row-group.active {
+  border-color: rgba(22, 134, 111, 0.42);
+  background: #f7fcf9;
+  box-shadow: 0 12px 28px rgba(22, 134, 111, 0.12);
+  transform: translateY(-1px);
+}
+
+.draft-row-group.active::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  content: "";
+  background: var(--mint);
+}
+
+.draft-row-group .draft-row {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.draft-row-group.active .draft-row-shell {
+  background: rgba(232, 247, 241, 0.44);
+}
+
+.draft-row-group.current-batch .draft-row {
+  box-shadow: inset 4px 0 0 var(--mint);
+}
+
+.draft-row-group.unread .draft-row {
+  border-color: rgba(214, 82, 57, 0.34);
+}
+
+.draft-row-group.history-batch .draft-row {
+  opacity: 0.78;
+}
+
+.draft-row-group.active .draft-row {
+  box-shadow: none;
 }
 
 .draft-row:hover,
@@ -1157,19 +1224,77 @@ textarea {
   font-size: 12px;
 }
 
+.draft-batch-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.draft-row .draft-batch-badge.current {
+  color: #126953;
+  background: rgba(45, 167, 140, 0.18);
+}
+
+.draft-row .draft-batch-badge.history {
+  color: #7c6a50;
+  background: rgba(183, 129, 45, 0.14);
+}
+
+.draft-read-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin: 0 0 4px 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.draft-read-badge.unread {
+  color: #9f2f20;
+  background: rgba(214, 82, 57, 0.14);
+}
+
+.draft-read-badge.read {
+  color: #637168;
+  background: rgba(72, 92, 82, 0.1);
+}
+
 .draft-row h4 {
   margin: 3px 0 6px;
   font-size: 17px;
 }
 
-.draft-row strong {
-  display: grid;
-  width: 48px;
-  height: 48px;
+.draft-delete-button {
+  display: inline-grid;
+  min-width: 74px;
+  padding: 10px 8px;
   place-items: center;
-  border-radius: 16px;
-  color: white;
-  background: var(--mint);
+  border: 1px solid rgba(214, 82, 57, 0.24);
+  border-radius: var(--radius-md);
+  color: #9f2f20;
+  background: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.draft-delete-button:hover:not(:disabled),
+.draft-delete-button:focus-visible {
+  background: rgba(214, 82, 57, 0.1);
+}
+
+.draft-delete-button span {
+  margin-top: 4px;
+}
+
+.draft-row-group.active .draft-delete-button {
+  border-color: rgba(214, 82, 57, 0.28);
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .draft-detail {
@@ -1177,6 +1302,21 @@ textarea {
   gap: 10px;
   margin-top: 12px;
   padding: 14px;
+}
+
+.draft-detail.inline {
+  margin-top: 0;
+  border-top-color: rgba(30, 28, 25, 0.08);
+  border-top-right-radius: 0;
+  border-top-left-radius: 0;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.draft-row-group.active .draft-detail.inline {
+  margin-top: 0;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .draft-detail div:first-child {
@@ -2202,11 +2342,6 @@ button:active:not(:disabled) {
 .draft-row:hover,
 .draft-row.active {
   background: #f6faf7;
-}
-
-.draft-row strong {
-  border-radius: 12px;
-  background: var(--mint);
 }
 
 .empty-state {

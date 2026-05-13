@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterDraftStore } from "./store";
+import { deleteDraftInList, filterDraftStore, markDraftReadInList } from "./store";
 import type { GeneratedDraft } from "@/lib/generation/draft-generator";
 
 describe("draft store filters", () => {
@@ -22,6 +22,27 @@ describe("draft store filters", () => {
     expect(filterDraftStore(drafts, { accountId: "A2", keyword: "校园" }).map((draft) => draft.id)).toEqual([
       "draft-a2-1"
     ]);
+  });
+
+  it("marks only the opened draft as read", () => {
+    const drafts = [
+      makeDraft({ id: "draft-a2-1", accountId: "A2", topic: "topic-a" }),
+      makeDraft({ id: "draft-a2-2", accountId: "A2", topic: "topic-b" })
+    ];
+
+    const next = markDraftReadInList(drafts, "draft-a2-2", "2026-05-08T10:00:00.000Z");
+
+    expect(next.find((draft) => draft.id === "draft-a2-1")?.readAt).toBeUndefined();
+    expect(next.find((draft) => draft.id === "draft-a2-2")?.readAt).toBe("2026-05-08T10:00:00.000Z");
+  });
+
+  it("deletes only the requested draft from a draft list", () => {
+    const drafts = [
+      makeDraft({ id: "draft-a2-1", accountId: "A2", topic: "topic-a" }),
+      makeDraft({ id: "draft-a2-2", accountId: "A2", topic: "topic-b" })
+    ];
+
+    expect(deleteDraftInList(drafts, "draft-a2-1").map((draft) => draft.id)).toEqual(["draft-a2-2"]);
   });
 });
 

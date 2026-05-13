@@ -4,6 +4,11 @@ import { fail, ok, parseJson } from "@/lib/http";
 
 export const runtime = "nodejs";
 
+const requiredImagePrompt = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : ""),
+  z.string().min(1, "图片 Prompt 是大模型生成的必填项")
+);
+
 const schema = z.object({
   drafts: z
     .array(
@@ -19,7 +24,7 @@ const schema = z.object({
     )
     .min(1)
     .max(10),
-  customPrompt: z.string().optional(),
+  customPrompt: requiredImagePrompt,
   imagesPerDraft: z.number().int().min(1).max(3).optional()
 });
 
@@ -27,7 +32,7 @@ export async function POST(request: Request) {
   try {
     const input = await parseJson(request, schema);
     const imagesPerDraft = input.imagesPerDraft ?? 1;
-    const customPrompt = input.customPrompt?.trim();
+    const customPrompt = input.customPrompt;
     const results = [];
 
     for (const draft of input.drafts) {
@@ -36,11 +41,7 @@ export async function POST(request: Request) {
       for (const prompt of prompts) {
         images.push({
           prompt,
-          url: await generateArkImage(
-            customPrompt
-              ? `${customPrompt}\n${prompt}`
-              : `${prompt}，小红书图文封面质感，真实活动策划视觉，高清，无文字水印`
-          )
+          url: await generateArkImage(`${customPrompt}\n${prompt}`)
         });
       }
       results.push({ draftId: draft.id, images });

@@ -1,3 +1,5 @@
+import { WORKFLOW_IMAGES_PER_DRAFT } from "@/lib/workflow/run-config";
+
 export type DraftSelectionInput = {
   title: string;
   body: string;
@@ -26,8 +28,8 @@ export function validateDraftForSelection(input: DraftSelectionInput): DraftSele
     errors.push("标签需保持 8-12 个");
   }
 
-  if (input.imageCount !== 10) {
-    errors.push("图片需保持封面+9张");
+  if (input.imageCount !== WORKFLOW_IMAGES_PER_DRAFT) {
+    errors.push(`图片需保持${WORKFLOW_IMAGES_PER_DRAFT}张候选图`);
   }
 
   if (!input.licenseComplete) {

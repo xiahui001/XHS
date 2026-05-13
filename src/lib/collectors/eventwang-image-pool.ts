@@ -85,19 +85,33 @@ export async function readEventwangImagePool(options: ReadEventwangImagePoolOpti
   const searchedTerms = options.searchedTerms?.filter(Boolean) ?? (requestedKeyword ? [requestedKeyword] : []);
   const allowedAccountId = normalizeAccountId(options.accountId);
   const manifests = await findManifestFiles(rootDir);
+  const manifestEntries = [];
   const selected: EventwangImagePoolItem[] = [];
   const skipped: EventwangImagePoolSkipped[] = [];
   const seenKeys = new Set(options.usedLocalPaths?.map((localPath) => normalizePathKey(localPath)) ?? []);
   const usedKeywords = new Set<string>();
 
   for (const manifestPath of manifests) {
-    if (selected.length >= limit) break;
-
     const manifest = await readManifest(manifestPath);
     if (!manifest) continue;
 
     const keyword = resolveManifestKeyword(manifest, manifestPath);
     if (allowedAccountId && !inferEventwangImagePoolAccountIds(keyword).includes(allowedAccountId)) continue;
+    manifestEntries.push({
+      manifest,
+      manifestPath,
+      keyword,
+      relevanceScore: scoreManifestKeyword(keyword, requestedKeyword, searchedTerms)
+    });
+  }
+
+  manifestEntries.sort((left, right) => {
+    if (right.relevanceScore !== left.relevanceScore) return right.relevanceScore - left.relevanceScore;
+    return right.manifestPath.localeCompare(left.manifestPath);
+  });
+
+  for (const { manifest, manifestPath, keyword } of manifestEntries) {
+    if (selected.length >= limit) break;
 
     const items = Array.isArray(manifest.items) ? manifest.items : [];
     for (const rawItem of items) {
@@ -212,6 +226,25 @@ function resolveManifestKeyword(manifest: EventwangImagePoolManifest, manifestPa
     .split(path.sep)
     .find((part) => part.startsWith("keyword-"));
   return keywordDir?.replace(/^keyword-/, "") ?? "";
+}
+
+function scoreManifestKeyword(keyword: string, requestedKeyword: string, searchedTerms: string[]) {
+  const normalizedKeyword = normalizeKeyword(keyword);
+  const normalizedRequestedKeyword = normalizeKeyword(requestedKeyword);
+  const normalizedTerms = [normalizedRequestedKeyword, ...searchedTerms.map(normalizeKeyword)].filter(Boolean);
+  let score = 0;
+
+  normalizedTerms.forEach((term, index) => {
+    if (!term) return;
+    const weight = Math.max(1, 100 - index);
+    if (normalizedKeyword === term) {
+      score = Math.max(score, 1000 + weight);
+    } else if (normalizedKeyword.includes(term) || term.includes(normalizedKeyword)) {
+      score = Math.max(score, 700 + weight);
+    }
+  });
+
+  return score;
 }
 
 function normalizeManifestItem(rawItem: unknown, keyword: string, fallbackIndex: number): EventwangImagePoolItem {

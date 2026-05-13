@@ -26,6 +26,30 @@ export async function appendDrafts(drafts: GeneratedDraft[]): Promise<GeneratedD
   return next;
 }
 
+export async function markDraftRead(draftId: string, readAt = new Date().toISOString()): Promise<GeneratedDraft[]> {
+  const existing = await readDraftStore();
+  const next = markDraftReadInList(existing, draftId, readAt);
+  await mkdir(path.dirname(STORE_PATH), { recursive: true });
+  await writeFile(STORE_PATH, JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
+export async function deleteDraft(draftId: string): Promise<GeneratedDraft[]> {
+  const existing = await readDraftStore();
+  const next = deleteDraftInList(existing, draftId);
+  await mkdir(path.dirname(STORE_PATH), { recursive: true });
+  await writeFile(STORE_PATH, JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
+export function markDraftReadInList(drafts: GeneratedDraft[], draftId: string, readAt: string): GeneratedDraft[] {
+  return drafts.map((draft) => (draft.id === draftId ? { ...draft, readAt } : draft));
+}
+
+export function deleteDraftInList(drafts: GeneratedDraft[], draftId: string): GeneratedDraft[] {
+  return drafts.filter((draft) => draft.id !== draftId);
+}
+
 export function filterDraftStore(drafts: GeneratedDraft[], filter: DraftStoreFilter): GeneratedDraft[] {
   const keyword = filter.keyword?.trim();
   const accountId = filter.accountId?.trim();

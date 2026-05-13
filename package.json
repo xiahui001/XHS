@@ -8,6 +8,8 @@
     "start": "next start --hostname 127.0.0.1 --port 3000",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:baseline": "vitest run src/lib/collectors/eventwang-quota.test.ts src/lib/collectors/eventwang-gallery-candidates.test.ts src/lib/collectors/eventwang-image-dedupe.test.ts src/lib/collectors/eventwang-image-pool.test.ts src/lib/collectors/eventwang-fallback.test.ts src/lib/collectors/eventwang-usability.test.ts src/app/api/materials/collect-eventwang-free/route.test.ts src/lib/generation/draft-image-assignment-service.test.ts src/lib/generation/image-usage-store.test.ts src/app/api/drafts/route.test.ts src/components/matrix-dashboard.auth.test.ts src/components/matrix-dashboard.draft-list.test.ts src/components/matrix-dashboard.mobile-package.test.ts src/lib/auth/session.test.ts src/lib/workflow/unattended.test.ts src/lib/publish/mobile-package.test.ts src/app/api/mobile-publish-packages/route.test.ts src/app/api/mobile-publish-packages/[packageId]/route.test.ts src/app/mobile-publish/[packageId]/page.test.ts",
+    "regression": "npm run test && npm run typecheck && npm run build",
     "typecheck": "tsc --noEmit",
     "crawl:eventwang": "node scripts/crawl-eventwang.mjs"
   },

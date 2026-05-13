@@ -44,6 +44,26 @@ describe("eventwang image pool", () => {
     expect(result.blockingReason).toContain("本地图片池");
   });
 
+  it("prioritizes local fallback manifests that match the requested keyword or search terms", async () => {
+    const workspaceRoot = await makeTempDir();
+    const rootDir = path.join(workspaceRoot, "data", "eventwang-gallery");
+    const genericPath = await writeManifestImage(workspaceRoot, "校园zz宣讲会", "generic-1", "generic image");
+    const requestedPath = await writeManifestImage(workspaceRoot, "校园赛事", "requested-1", "requested image");
+    await writeManifest(workspaceRoot, "校园zz宣讲会", [makeItem("generic-1", genericPath)]);
+    await writeManifest(workspaceRoot, "校园赛事", [makeItem("requested-1", requestedPath)]);
+
+    const result = await readEventwangImagePool({
+      rootDir,
+      workspaceRoot,
+      accountId: "A2",
+      requestedKeyword: "校园赛事",
+      searchedTerms: ["校园赛事", "校园活动"],
+      limit: 1
+    });
+
+    expect(result.items.map((item) => item.galleryId)).toEqual(["requested-1"]);
+  });
+
   it("returns a usable empty pool result when the current section has no local images", async () => {
     const workspaceRoot = await makeTempDir();
     const rootDir = path.join(workspaceRoot, "data", "eventwang-gallery");

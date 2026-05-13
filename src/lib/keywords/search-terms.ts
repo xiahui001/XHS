@@ -41,6 +41,15 @@ export function buildCoreSearchTerms(keyword: string, maxTerms = 3): string[] {
   return unique(terms).slice(0, maxTerms);
 }
 
+export function buildEventwangFallbackSearchTerms(
+  keyword: string,
+  sameDomainKeywords: string[],
+  maxTerms = 8
+): string[] {
+  const coreTerms = buildCoreSearchTerms(keyword, Math.min(3, maxTerms));
+  return unique([...coreTerms, ...sameDomainKeywords.map((term) => term.trim()).filter(Boolean)]).slice(0, maxTerms);
+}
+
 function scenarioTerms(keyword: string) {
   return SCENARIO_TERMS.filter((item) => item.match.test(keyword)).flatMap((item) => item.terms);
 }
@@ -63,4 +72,3 @@ function unique(values: string[]) {
     return true;
   });
 }
-

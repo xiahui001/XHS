@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { appendDrafts, filterDraftStore, readDraftStore } from "@/lib/drafts/store";
+import {
+  appendDrafts,
+  deleteDraft,
+  deleteDraftInList,
+  filterDraftStore,
+  markDraftRead,
+  markDraftReadInList,
+  readDraftStore
+} from "@/lib/drafts/store";
 import type { GeneratedDraft } from "@/lib/generation/draft-generator";
 import { fail, ok, parseJson } from "@/lib/http";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -14,27 +22,44 @@ const schema = z.object({
   accountId: z.string().optional()
 });
 
+const readSchema = z.object({
+  draftId: z.string().min(1),
+  readAt: z.string().optional(),
+  userId: z.string().optional(),
+  accountId: z.string().optional()
+});
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const keyword = url.searchParams.get("keyword");
   const accountId = url.searchParams.get("accountId") || url.searchParams.get("accountCode");
   const userId = url.searchParams.get("userId");
   const drafts = await readDraftStore();
-  const filteredDrafts = filterDraftStore(drafts, { keyword, accountId });
+  const localAccountDrafts = filterDraftStore(drafts, { accountId });
+  const filteredDrafts = filterDraftStore(localAccountDrafts, { keyword, accountId });
   const supabase = createSupabaseServerClient();
 
   if (supabase && userId && accountId) {
     try {
       const persistedDrafts = await readSupabaseDrafts(supabase, userId, accountId);
       if (persistedDrafts) {
+        const mergedDrafts = mergeDrafts(localAccountDrafts, persistedDrafts);
+        if (mergedDrafts.length !== persistedDrafts.length) {
+          await writeSupabaseDrafts(supabase, userId, accountId, mergedDrafts);
+          return ok({
+            drafts: filterDraftStore(mergedDrafts, { keyword, accountId }),
+            mode: "supabase_seeded_from_local"
+          });
+        }
+
         return ok({
           drafts: filterDraftStore(persistedDrafts, { keyword, accountId }),
           mode: "supabase_storage"
         });
       }
 
-      if (filteredDrafts.length) {
-        await writeSupabaseDrafts(supabase, userId, accountId, filteredDrafts);
+      if (localAccountDrafts.length) {
+        await writeSupabaseDrafts(supabase, userId, accountId, localAccountDrafts);
         return ok({
           drafts: filteredDrafts,
           mode: "supabase_seeded_from_local"
@@ -65,7 +90,7 @@ export async function POST(request: Request) {
     if (supabase && input.userId && input.accountId) {
       try {
         const existingDrafts = (await readSupabaseDrafts(supabase, input.userId, input.accountId)) ?? [];
-        const mergedDrafts = mergeDrafts(incomingDrafts, existingDrafts);
+        const mergedDrafts = mergeDrafts(filteredDrafts, existingDrafts);
         await writeSupabaseDrafts(supabase, input.userId, input.accountId, mergedDrafts);
         return ok({
           drafts: filterDraftStore(mergedDrafts, { accountId: input.accountId }),
@@ -84,6 +109,71 @@ export async function POST(request: Request) {
     return ok({ drafts: filteredDrafts, insertedCount: incomingDrafts.length, mode: "local_store" });
   } catch (error) {
     return fail("DRAFT_SAVE_FAILED", error instanceof Error ? error.message : "草稿保存失败", 400);
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const input = await parseJson(request, readSchema);
+    const readAt = input.readAt ?? new Date().toISOString();
+    const drafts = await markDraftRead(input.draftId, readAt);
+    const filteredDrafts = filterDraftStore(drafts, { accountId: input.accountId });
+    const supabase = createSupabaseServerClient();
+
+    if (supabase && input.userId && input.accountId) {
+      try {
+        const existingDrafts = (await readSupabaseDrafts(supabase, input.userId, input.accountId)) ?? filteredDrafts;
+        const updatedDrafts = markDraftReadInList(existingDrafts.length ? existingDrafts : filteredDrafts, input.draftId, readAt);
+        await writeSupabaseDrafts(supabase, input.userId, input.accountId, updatedDrafts);
+        return ok({
+          drafts: filterDraftStore(updatedDrafts, { accountId: input.accountId }),
+          readAt,
+          mode: "supabase_storage"
+        });
+      } catch {
+        return ok({
+          drafts: filteredDrafts,
+          readAt,
+          mode: "local_store_fallback"
+        });
+      }
+    }
+
+    return ok({ drafts: filteredDrafts, readAt, mode: "local_store" });
+  } catch (error) {
+    return fail("DRAFT_READ_MARK_FAILED", error instanceof Error ? error.message : "草稿已读状态保存失败", 400);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const input = await parseJson(request, readSchema);
+    const drafts = await deleteDraft(input.draftId);
+    const filteredDrafts = filterDraftStore(drafts, { accountId: input.accountId });
+    const supabase = createSupabaseServerClient();
+
+    if (supabase && input.userId && input.accountId) {
+      try {
+        const existingDrafts = (await readSupabaseDrafts(supabase, input.userId, input.accountId)) ?? filteredDrafts;
+        const updatedDrafts = deleteDraftInList(existingDrafts.length ? existingDrafts : filteredDrafts, input.draftId);
+        await writeSupabaseDrafts(supabase, input.userId, input.accountId, updatedDrafts);
+        return ok({
+          drafts: filterDraftStore(updatedDrafts, { accountId: input.accountId }),
+          deletedDraftId: input.draftId,
+          mode: "supabase_storage"
+        });
+      } catch {
+        return ok({
+          drafts: filteredDrafts,
+          deletedDraftId: input.draftId,
+          mode: "local_store_fallback"
+        });
+      }
+    }
+
+    return ok({ drafts: filteredDrafts, deletedDraftId: input.draftId, mode: "local_store" });
+  } catch (error) {
+    return fail("DRAFT_DELETE_FAILED", error instanceof Error ? error.message : "草稿删除失败", 400);
   }
 }
 

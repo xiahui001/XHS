@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -60,7 +60,7 @@ export function createEventwangImageDedupeStore(dbPath = "data/eventwang-gallery
     const contentHash = hashFile(image.localPath);
     if (hasFingerprint("content", contentHash)) {
       touchFingerprint.run(SOURCE, "content", contentHash);
-      return { duplicate: true, reason: "content" };
+      return { duplicate: true, reason: "content", contentHash };
     }
     return { duplicate: false, contentHash };
   }
@@ -98,6 +98,33 @@ export function createEventwangImageDedupeStore(dbPath = "data/eventwang-gallery
       closed = true;
     }
   };
+}
+
+export function backfillEventwangDedupeStoreFromManifests(
+  store,
+  rootDir = "data/eventwang-gallery",
+  workspaceRoot = process.cwd()
+) {
+  let recorded = 0;
+  for (const manifestPath of findManifestFiles(rootDir)) {
+    const manifest = readJsonFile(manifestPath);
+    if (!manifest || !Array.isArray(manifest.items)) continue;
+
+    for (const item of manifest.items) {
+      const localPath = resolveExistingLocalPath(item.localPath, workspaceRoot);
+      if (!localPath) continue;
+
+      store.recordDownloadedImage({
+        galleryId: item.galleryId,
+        detailUrl: item.detailUrl,
+        previewUrl: item.previewUrl,
+        localPath,
+        keyword: manifest.keyword
+      });
+      recorded += 1;
+    }
+  }
+  return { recorded };
 }
 
 export function normalizeEventwangImageUrl(input) {
@@ -156,4 +183,40 @@ function urlFingerprint(input, reason) {
 function isTransientQueryKey(key) {
   const lower = key.toLowerCase();
   return TRANSIENT_QUERY_KEYS.has(lower) || TRANSIENT_QUERY_PREFIXES.some((prefix) => lower.startsWith(prefix));
+}
+
+function findManifestFiles(rootDir) {
+  const root = path.resolve(rootDir);
+  const rootStat = statSync(root, { throwIfNoEntry: false });
+  if (!rootStat?.isDirectory()) return [];
+
+  const files = [];
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && entry.name === "manifest.json") {
+        files.push(fullPath);
+      }
+    }
+  }
+  return files;
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function resolveExistingLocalPath(localPath, workspaceRoot) {
+  if (!localPath) return null;
+
+  const candidate = path.isAbsolute(localPath) ? localPath : path.resolve(workspaceRoot, localPath);
+  return statSync(candidate, { throwIfNoEntry: false })?.isFile() ? candidate : null;
 }

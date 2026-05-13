@@ -5,7 +5,7 @@ const validDraft = {
   title: "年会舞台别只问总价",
   body: "年会舞台费用通常和尺寸、灯光、LED、音响、搭建时间有关。先确认人数、场地和流程，再做预算会更稳。",
   tags: ["年会策划", "舞台搭建", "企业年会", "活动执行", "会议布置", "灯光音响", "LED大屏", "团建活动"],
-  imageCount: 10,
+  imageCount: 12,
   licenseComplete: true
 };
 
@@ -30,7 +30,7 @@ describe("draft selection validation", () => {
     expect(result.errors).toEqual([
       "标题需控制在 20 字内",
       "标签需保持 8-12 个",
-      "图片需保持封面+9张",
+      "图片需保持12张候选图",
       "素材授权信息不完整"
     ]);
   });

@@ -1,9 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const { createEventwangImageDedupeStore, normalizeEventwangImageUrl } = await import(
+const {
+  backfillEventwangDedupeStoreFromManifests,
+  createEventwangImageDedupeStore,
+  normalizeEventwangImageUrl
+} = await import(
   new URL("../../../scripts/lib/eventwang-image-dedupe.mjs", import.meta.url).href
 );
 
@@ -86,8 +90,85 @@ describe("eventwang image dedupe store", () => {
         localPath: secondPath,
         keyword: "校园活动"
       })
-    ).toEqual({ duplicate: true, reason: "content" });
+    ).toMatchObject({ duplicate: true, reason: "content" });
     secondStore.close();
+  });
+
+  it("records a candidate fingerprint after a content duplicate so future checks skip before download", async () => {
+    const tempDir = await makeTempDir();
+    const firstPath = path.join(tempDir, "first.jpg");
+    const secondPath = path.join(tempDir, "second.jpg");
+    await writeFile(firstPath, "same bytes");
+    await writeFile(secondPath, "same bytes");
+    const store = createEventwangImageDedupeStore(path.join(tempDir, "eventwang.sqlite"));
+
+    store.recordDownloadedImage({
+      galleryId: "3001",
+      detailUrl: "https://www.eventwang.cn/Gallery/detail-3001_291988",
+      previewUrl: "https://img3.eventwang.com.cn/a/one.jpg",
+      localPath: firstPath,
+      keyword: "校园活动"
+    });
+    const duplicate = store.hasDuplicateContent({
+      galleryId: "3002",
+      detailUrl: "https://www.eventwang.cn/Gallery/detail-3002_291988",
+      previewUrl: "https://img3.eventwang.com.cn/a/two.jpg",
+      localPath: secondPath,
+      keyword: "校园活动"
+    });
+    expect(duplicate).toMatchObject({ duplicate: true, reason: "content" });
+
+    store.recordDownloadedImage({
+      galleryId: "3002",
+      detailUrl: "https://www.eventwang.cn/Gallery/detail-3002_291988",
+      previewUrl: "https://img3.eventwang.com.cn/a/two.jpg",
+      localPath: secondPath,
+      keyword: "校园活动",
+      contentHash: duplicate.contentHash
+    });
+
+    expect(
+      store.hasSeenCandidate({
+        galleryId: "3002",
+        detailUrl: "https://www.eventwang.cn/Gallery/detail-3002_291988",
+        previewUrl: "https://img3.eventwang.com.cn/a/two.jpg"
+      })
+    ).toEqual({ duplicate: true, reason: "url" });
+    store.close();
+  });
+
+  it("backfills historical manifest items before collecting new images", async () => {
+    const tempDir = await makeTempDir();
+    const historyImagePath = path.join(tempDir, "history.jpg");
+    const manifestDir = path.join(tempDir, "keyword-history", "2026-05-11T00-00-00-000Z");
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(historyImagePath, "historical image");
+    await writeFile(
+      path.join(manifestDir, "manifest.json"),
+      JSON.stringify({
+        keyword: "历史活动",
+        items: [
+          {
+            galleryId: "4001",
+            detailUrl: "https://www.eventwang.cn/Gallery/detail-4001_291988",
+            previewUrl: "https://img3.eventwang.com.cn/a/history.jpg",
+            localPath: historyImagePath
+          }
+        ]
+      })
+    );
+    const store = createEventwangImageDedupeStore(path.join(tempDir, "eventwang.sqlite"));
+
+    expect(backfillEventwangDedupeStoreFromManifests(store, tempDir)).toEqual({ recorded: 1 });
+
+    expect(
+      store.hasSeenCandidate({
+        galleryId: "4001",
+        detailUrl: "https://www.eventwang.cn/Gallery/detail-4001_291988",
+        previewUrl: "https://img3.eventwang.com.cn/a/history.jpg"
+      })
+    ).toEqual({ duplicate: true, reason: "url" });
+    store.close();
   });
 
   it("allows cleanup to call close more than once", async () => {

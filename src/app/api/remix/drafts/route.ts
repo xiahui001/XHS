@@ -4,6 +4,7 @@ import { validateDraftForSelection } from "@/lib/drafts/validation";
 import { DEFAULT_ACCOUNTS } from "@/lib/generation/planner";
 import type { GeneratedDraft } from "@/lib/generation/draft-generator";
 import { fail, ok, parseJson } from "@/lib/http";
+import { WORKFLOW_IMAGES_PER_DRAFT } from "@/lib/workflow/run-config";
 
 export const runtime = "nodejs";
 
@@ -14,11 +15,16 @@ const referenceSchema = z.object({
   imageUrls: z.array(z.string()).optional()
 });
 
+const requiredTextPrompt = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : ""),
+  z.string().min(1, "文案 Prompt 是大模型生成的必填项")
+);
+
 const schema = z.object({
   keyword: z.string().min(1),
   references: z.array(referenceSchema).min(1),
   accountId: z.string().optional(),
-  customPrompt: z.string().optional(),
+  customPrompt: requiredTextPrompt,
   keywordCategory: z.string().optional(),
   keywordCategories: z.array(z.string()).optional(),
   count: z.number().int().min(1).max(10).optional()
@@ -63,8 +69,9 @@ async function requestDraftsFromArk(input: RemixDraftInput): Promise<ArkDraftPay
   const count = input.count ?? 5;
   const schemaHint = `你是小红书活动策划矩阵号二创编辑。基于真实采集参考进行重写，不照搬原文，不承诺平台规避。
 本次生成 ${count} 篇草稿；如果传入两个类别，请按类别顺序尽量均衡分配。
+强制执行用户 Prompt：输入 payload.userFineTunePrompt 是本次生成的最高优先级业务约束，必须体现在选题、角度、标题、正文、标签和配图需求中。
 只能输出一个 JSON 对象，不能输出 Markdown。JSON 结构必须严格为：
-{"drafts":[{"accountId":"A1","title":"20字内","body":"150字内","tags":["8到12个"],"coverTitleOptions":["3个20字内"],"imagePrompts":["10个中文配图需求，第一张为封面，其余9张为正文场景"],"sourceUrls":["参考链接"]}]}`;
+{"drafts":[{"accountId":"A1","title":"20字内","body":"150字内","tags":["8到12个"],"coverTitleOptions":["3个20字内"],"imagePrompts":["${WORKFLOW_IMAGES_PER_DRAFT}个中文配图需求，作为手机端候选图给用户自行筛选"],"sourceUrls":["参考链接"]}]}`;
   const basePayload = {
     keyword: input.keyword,
     keywordCategory: input.keywordCategory ?? null,
@@ -73,7 +80,7 @@ async function requestDraftsFromArk(input: RemixDraftInput): Promise<ArkDraftPay
     references: buildCompactReferences(input.references, 6),
     count,
     targetAccountId: input.accountId ?? null,
-    userFineTunePrompt: input.customPrompt?.trim() || null
+    userFineTunePrompt: input.customPrompt
   };
 
   try {
@@ -110,7 +117,7 @@ function normalizeDraft(draft: ArkDraftPayload["drafts"][number], keyword: strin
   const account = DEFAULT_ACCOUNTS.find((item) => item.id === draft.accountId) ?? DEFAULT_ACCOUNTS[index % DEFAULT_ACCOUNTS.length];
   const safeTags = Array.isArray(draft.tags) ? draft.tags : [];
   const safeCovers = Array.isArray(draft.coverTitleOptions) ? draft.coverTitleOptions : [];
-  const imagePrompts = Array.isArray(draft.imagePrompts) ? draft.imagePrompts.slice(0, 10) : [];
+  const imagePrompts = Array.isArray(draft.imagePrompts) ? draft.imagePrompts.slice(0, WORKFLOW_IMAGES_PER_DRAFT) : [];
   const validation = validateDraftForSelection({
     title: draft.title,
     body: draft.body,

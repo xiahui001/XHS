@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { callArkJson } from "@/lib/ark/client";
 import { fail, ok, parseJson } from "@/lib/http";
-import { createSupabaseServerClient, readBearerToken } from "@/lib/supabase/server";
+import {
+  createSupabaseServerClient,
+  hasSupabaseAuthConfig,
+  readBearerToken,
+  resolveSupabaseAccessTokenUserId
+} from "@/lib/supabase/server";
 import { createKeywordPreset } from "@/lib/workspace/state";
 
 export const runtime = "nodejs";
@@ -23,11 +28,15 @@ export async function GET(request: Request) {
   if (!rawUserId) return fail("USER_ID_REQUIRED", "缺少用户 ID", 400);
 
   const accessToken = readBearerToken(request.headers.get("authorization"));
-  const supabase = createSupabaseServerClient(accessToken);
-  if (!supabase) return ok({ presets: [], mode: "demo" });
-  const userId = await resolveSupabaseUserId(supabase, rawUserId);
+  const authFailure = requireSupabaseAccessToken(accessToken);
+  if (authFailure) return authFailure;
 
-  let query = supabase.from("keyword_presets").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+  const supabase = createSupabaseServerClient(accessToken, { requireAccessToken: true });
+  if (!supabase) return ok({ presets: [], mode: "demo" });
+  const userId = await resolveRequestUserId(supabase, accessToken, rawUserId);
+  if (!userId.ok) return userId.response;
+
+  let query = supabase.from("keyword_presets").select("*").eq("user_id", userId.value).order("created_at", { ascending: false });
   if (accountCode) query = query.eq("account_code", accountCode);
 
   const { data, error } = await query;
@@ -48,21 +57,25 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const input = await parseJson(request, schema);
-    const categories = await classifyKeywordCategories(input.rawText);
     const accessToken = readBearerToken(request.headers.get("authorization"));
-    const supabase = createSupabaseServerClient(accessToken);
+    const authFailure = requireSupabaseAccessToken(accessToken);
+    if (authFailure) return authFailure;
+
+    const supabase = createSupabaseServerClient(accessToken, { requireAccessToken: true });
+    const categories = await classifyKeywordCategories(input.rawText);
     const preset = createKeywordPreset({
       accountId: input.accountCode,
       rawText: input.rawText,
       categories
     });
     if (!supabase) return ok({ preset, mode: "demo" });
-    const userId = await resolveSupabaseUserId(supabase, input.userId);
+    const userId = await resolveRequestUserId(supabase, accessToken, input.userId);
+    if (!userId.ok) return userId.response;
 
     const { data, error } = await supabase
       .from("keyword_presets")
       .insert({
-        user_id: userId,
+        user_id: userId.value,
         account_code: preset.accountId,
         raw_text: preset.rawText,
         keywords: preset.keywords,
@@ -88,18 +101,32 @@ export async function POST(request: Request) {
   }
 }
 
-async function resolveSupabaseUserId(supabase: ReturnType<typeof createSupabaseServerClient>, userIdOrEmail: string) {
-  if (!supabase) throw new Error("Supabase 未配置");
-  if (isUuid(userIdOrEmail)) return userIdOrEmail;
+function requireSupabaseAccessToken(accessToken: string | null) {
+  if (!accessToken && hasSupabaseAuthConfig()) {
+    return fail("AUTH_TOKEN_REQUIRED", "登录令牌缺失，请重新登录", 401);
+  }
+  return null;
+}
 
-  const email = userIdOrEmail.includes("@") ? userIdOrEmail : "";
-  if (!email) throw new Error("用户登录态已过期，请退出后重新登录");
+async function resolveRequestUserId(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServerClient>>,
+  accessToken: string | null,
+  requestedUserId: string
+): Promise<{ ok: true; value: string } | { ok: false; response: Response }> {
+  if (!accessToken) return { ok: false, response: fail("AUTH_TOKEN_REQUIRED", "登录令牌缺失，请重新登录", 401) };
 
-  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (error) throw new Error(error.message);
-  const user = data.users.find((item) => item.email?.toLowerCase() === email.toLowerCase());
-  if (!user) throw new Error("未找到该邮箱对应的 Supabase 用户，请重新登录");
-  return user.id;
+  try {
+    const authenticatedUserId = await resolveSupabaseAccessTokenUserId(supabase, accessToken);
+    if (isUuid(requestedUserId) && requestedUserId !== authenticatedUserId) {
+      return { ok: false, response: fail("AUTH_USER_MISMATCH", "登录用户与请求用户不一致", 403) };
+    }
+    return { ok: true, value: authenticatedUserId };
+  } catch (error) {
+    return {
+      ok: false,
+      response: fail("AUTH_SESSION_INVALID", error instanceof Error ? error.message : "登录状态已过期，请重新登录", 401)
+    };
+  }
 }
 
 function isUuid(value: string) {

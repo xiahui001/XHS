@@ -58,11 +58,25 @@ type GlobalCheckFacts = {
   bindingReady: boolean;
 };
 
-const DEFAULT_TEXT_REMIX_PROMPT =
+const LEGACY_TEXT_REMIX_PROMPT =
   "你是小红书活动策划账号的文案二创编辑。基于用户采集素材重写，不照搬原文，保留可执行细节，输出适合对应账号定位的笔记草稿。";
 
-const DEFAULT_IMAGE_REMIX_PROMPT =
+const LEGACY_IMAGE_REMIX_PROMPT =
   "你是小红书活动视觉图片二创导演。基于授权素材生成封面和配图提示词，强调真实活动现场、清晰构图、无文字水印。";
+
+export const DEFAULT_TEXT_REMIX_PROMPT = `你是小红书活动策划矩阵号的文案二创总编。大模型生成必须强制执行本 Prompt，并优先读取已选领域号、账号定位、关键词类别、热门参考和来源链接。
+强制目标：
+1. 领域准确性：标题、正文、标签必须贴合已选领域号，不能跨领域泛写。
+2. 热点捕捉性：从小红书热门文案里提炼高频场景、季节节点、用户痛点和趋势表达，保留可验证参考，不照搬原句。
+3. 文案创造性：每篇草稿使用不同开头、角度、现场细节和行动建议，避免模板句、空泛情绪和重复标题。
+4. 发布可用性：标题 20 字内，正文 150 字内，标签 8-12 个；配图需求必须能指导图片抓取准确匹配活动场景。`;
+
+export const DEFAULT_IMAGE_REMIX_PROMPT = `你是小红书活动视觉图片二创和图库抓取导演。大模型图片工作必须强制执行本 Prompt，并围绕已选领域号、草稿标题、正文卖点和图片需求。
+强制目标：
+1. 图片抓取准确性：优先匹配真实活动现场、舞台/装置/陈列/人群互动/物料细节，拒绝泛素材、纯氛围图和不贴领域的图片。
+2. 热点场景性：结合当前关键词里的节日、毕业季、开学季、年会、快闪、市集、发布会等场景，选出更容易被小红书用户理解和收藏的画面。
+3. 视觉一致性：封面要有强主体和清晰构图，正文图补足流程、细节、打卡点、空间关系，避免文字水印和低清截图。
+4. 二创可执行性：输出或拼接图片提示时保留已选领域号语境，让图片服务于文案卖点，而不是单纯好看。`;
 
 export function createDefaultWorkspaceState(userId: string): WorkspaceState {
   return {
@@ -77,6 +91,12 @@ export function createDefaultWorkspaceState(userId: string): WorkspaceState {
       detail: "等待手机发布账号人工确认"
     }
   };
+}
+
+export function normalizeWorkspacePrompts(input: Partial<WorkspacePrompts> | null | undefined): WorkspacePrompts {
+  const textRemix = normalizePromptValue(input?.textRemix, LEGACY_TEXT_REMIX_PROMPT, DEFAULT_TEXT_REMIX_PROMPT);
+  const imageRemix = normalizePromptValue(input?.imageRemix, LEGACY_IMAGE_REMIX_PROMPT, DEFAULT_IMAGE_REMIX_PROMPT);
+  return { textRemix, imageRemix };
 }
 
 export function buildGlobalChecks(facts: GlobalCheckFacts): GlobalCheck[] {
@@ -151,4 +171,10 @@ function makeCheck(key: GlobalCheckKey, label: string, ready: boolean, detail: s
     light: ready ? "green" : "red",
     detail: ready ? `${detail}可用` : `${detail}待处理`
   };
+}
+
+function normalizePromptValue(value: string | undefined, legacyDefault: string, nextDefault: string) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === legacyDefault) return nextDefault;
+  return trimmed;
 }

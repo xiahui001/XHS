@@ -14,6 +14,10 @@ export function getEventwangUsabilityError(result: EventwangUsabilityInput, mini
     return result.blockingReason || getLastAttemptReason(result) || "活动汪图库没有采集到可用原图";
   }
 
+  if (result.imageCount < minimumImages) {
+    return `活动汪原图不足：需要 ${minimumImages} 张，实际采集 ${result.imageCount} 张。`;
+  }
+
   return null;
 }
 

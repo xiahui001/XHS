@@ -15,6 +15,7 @@ export type AuthSessionSnapshot = {
 };
 
 const AUTH_STORAGE_KEY = "xhs-matrix-auth-session";
+const REFRESH_SKEW_SECONDS = 60;
 
 export function readStoredAuthSession(): AuthSessionSnapshot | null {
   if (typeof window === "undefined") return null;
@@ -38,4 +39,47 @@ export function storeAuthSession(snapshot: AuthSessionSnapshot) {
 export function clearStoredAuthSession() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+export function authSessionNeedsRefresh(
+  snapshot: AuthSessionSnapshot,
+  nowSeconds = Math.floor(Date.now() / 1000),
+  skewSeconds = REFRESH_SKEW_SECONDS
+) {
+  if (!snapshot.session?.accessToken || !snapshot.session.refreshToken || !snapshot.session.expiresAt) return true;
+  return snapshot.session.expiresAt <= nowSeconds + skewSeconds;
+}
+
+export async function readFreshStoredAuthSession(): Promise<AuthSessionSnapshot | null> {
+  const snapshot = readStoredAuthSession();
+  if (!snapshot) return null;
+  if (!authSessionNeedsRefresh(snapshot)) return snapshot;
+
+  const refreshToken = snapshot.session?.refreshToken;
+  if (!refreshToken) {
+    clearStoredAuthSession();
+    return null;
+  }
+
+  try {
+    const response = await fetch("/api/auth/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken })
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      data?: AuthSessionSnapshot;
+    } | null;
+
+    if (!response.ok || !payload?.ok || !payload.data?.session?.accessToken) {
+      clearStoredAuthSession();
+      return null;
+    }
+
+    storeAuthSession(payload.data);
+    return payload.data;
+  } catch {
+    return snapshot;
+  }
 }
